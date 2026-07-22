@@ -1,7 +1,7 @@
 # Migration Guide
 
 Guidance for existing installations and projects moving through the ongoing
-stabilization work (Phases 1-4). For what changed and when, see
+stabilization work (Phases 1-5). For what changed and when, see
 [docs/changelog.md](changelog.md). For the persistence contract itself, see
 [docs/persistence.md](persistence.md).
 
@@ -248,6 +248,55 @@ by prose alone. See docs/hooks.md for the rationale.
 **Action required**: none — hooks are opt-in and not installed by default;
 copy `examples/claude-code/hooks/` yourself if you want the gates enforced
 mechanically.
+
+## Phase 5 — Delivery guard, execution mode, TDD triangulation
+
+### `execution_mode` (new top-level config key)
+
+A top-level `execution_mode` key was added to the canonical `openspec/config.yaml`
+schema (a sibling of `schema:` and `rules:`), with two values:
+
+- `supervised` (default) — the orchestrator stops at the human gates (post-propose, a
+  verify `FAIL`, and pre-archive) and asks for a decision before continuing.
+- `auto` — the orchestrator advances automatically, halting only on `status: blocked`
+  or a verify `FAIL`.
+
+Resolution mirrors `compliance_mode` and `tdd`: a value the orchestrator explicitly
+propagates wins, else `execution_mode` in `openspec/config.yaml` (openspec/hybrid) or
+the `sdd-init/{project}` settings bundle (engram/none), else the default `supervised`.
+`sdd-init` asks for the mode at initialization and persists it; `sdd-new`/`sdd-continue`
+condition their human gates on it; `/sdd-ff` always runs in `auto` regardless of the
+configured value. The schema line is kept byte-identical between `openspec-convention.md`
+and the `sdd-init` Step 3 template.
+
+**Action required**: none. A missing `execution_mode` key defaults to `supervised` (the
+previous stop-at-every-gate behavior); set it to `auto` to let the pipeline auto-advance
+between dependency-ready phases.
+
+### Review Workload Guard + Delivery Strategy in `skills/branch-pr`
+
+`skills/branch-pr` gained a **Review Workload Guard** that measures a change against its
+base before a PR is assembled (`git diff --stat`/`--numstat` against `origin/<base>`) and
+partitions the work into a stacked chain of PRs when it crosses ~400 authored changed
+lines, or touches >8 files across >3 top-level modules. A **Delivery Strategy** table
+(small → single direct PR; large → stacked chain; risky domain — auth/payments/data/
+security — at any size → risk flag + mandatory rollback note) and a **Chain Strategy**
+(one branch per unit, each PR standalone, base = previous PR) accompany it. The
+orchestrator example template's delegation guide now routes delivery through this guard.
+
+**Action required**: none. This is guidance for how PRs are sized and delivered; it does
+not change any config or existing PR.
+
+### Optional TRIANGULATE sub-step in the TDD cycle
+
+The TDD cycle gained an **optional** `TRIANGULATE` sub-step between GREEN and REFACTOR:
+when a behavior has a real edge/boundary (empty input, zero/limit, off-by-one, error
+path), add a second test for the same scenario before refactoring; a failing boundary
+test loops back to GREEN. The cycle name is unchanged (still RED → GREEN → REFACTOR), the
+step is never required, and `sdd-verify` never flags its absence.
+
+**Action required**: none. Triangulation is optional and only relevant when the opt-in
+TDD module is enabled.
 
 ## Detecting an old install/clone
 

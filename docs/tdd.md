@@ -62,11 +62,16 @@ One behavior — a single spec scenario (Given/When/Then) — per cycle:
    failing output**. RED evidence is mandatory. A test that passes on its first
    run is not RED.
 2. **GREEN** — write the minimal code to make it pass; run the test; confirm green.
-3. **REFACTOR** — clean up under a green bar; re-run; confirm it stays green.
+3. **TRIANGULATE** *(optional)* — when the behavior has a real edge/boundary (empty
+   input, limit value, off-by-one, error path), add a second test for the **same**
+   scenario before refactoring; if it exposes a gap, loop back to GREEN. Skip it when
+   there is no meaningful boundary — it is never required and never renames the cycle.
+4. **REFACTOR** — clean up under a green bar; re-run; confirm it stays green.
 
-The full contract, anti-patterns (disguised test-after, RED that passes
-immediately, implementation-coupled tests, batch RED), and the per-task evidence
-table are in [skills/tdd/SKILL.md](../skills/tdd/SKILL.md).
+The full contract, the optional TRIANGULATE step, anti-patterns (disguised
+test-after, RED that passes immediately, implementation-coupled tests, batch RED),
+and the per-task evidence table (with its optional triangulation row) are in
+[skills/tdd/SKILL.md](../skills/tdd/SKILL.md).
 
 ## What each phase does when TDD is on
 

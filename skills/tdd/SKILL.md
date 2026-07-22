@@ -84,7 +84,19 @@ FOR EACH behavior (spec scenario S-{requirement-slug}-{n}, e.g. S-auth-1):
      ├── Run the same test — confirm it PASSES.
      └── Do NOT add functionality the test does not demand ("you aren't gonna need it").
 
-  3. REFACTOR — clean up under a green bar
+  3. TRIANGULATE (OPTIONAL) — pin a boundary before cleaning up
+     ├── Apply ONLY when the behavior has a meaningful edge/boundary worth locking in
+     │   (empty input, zero/limit value, off-by-one, error path, overflow) — otherwise
+     │   SKIP this step; never invent an edge just to fill it.
+     ├── Add a SECOND test for the SAME scenario (S-{requirement-slug}-{n}) exercising
+     │   that boundary. Run only that test.
+     ├── If it FAILS, the boundary is a real gap: go BACK to GREEN and extend the
+     │   minimal code until BOTH tests pass. If it passes on its first run, the edge is
+     │   already covered — keep the test as a regression guard and move on.
+     └── One extra test is enough per triangulation. This step never renames the cycle:
+         it stays RED → GREEN → REFACTOR, with triangulate as an optional interlude.
+
+  4. REFACTOR — clean up under a green bar
      ├── Improve naming, structure, duplication; match project conventions.
      ├── Re-run the test(s) — confirm they STILL PASS after every change.
      └── REFACTOR only with green tests. If tests are red, you are debugging, not
@@ -115,6 +127,7 @@ Include one row per task, each referencing its spec scenario ID:
 | Task | Scenario | Test File | RED (failing output captured) | GREEN (passing) | REFACTOR |
 |------|----------|-----------|-------------------------------|-----------------|----------|
 | 2.1 | S-auth-1 | `path/to/x_test.ext` | ✅ asserted-fail before impl | ✅ pass | ✅ no behavior change |
+| 2.1 △ | S-auth-1 (boundary) | `path/to/x_test.ext` | ✅ boundary asserted-fail | ✅ pass | ➖ folds into 2.1 |
 | 2.2 | S-auth-2 | `path/to/y_test.ext` | ✅ asserted-fail before impl | ✅ pass | ➖ none needed |
 ```
 
@@ -122,6 +135,15 @@ RED evidence is the load-bearing column: a row without captured failing output i
 test-after, not TDD, and `sdd-verify` flags it as a WARNING ("test-after
 detected") — never CRITICAL, because the module is opt-in and honest, not
 punitive.
+
+The `△` row is the OPTIONAL triangulation test from the cycle's TRIANGULATE step: a
+second, boundary test for the SAME scenario. It reuses that scenario's
+`S-{requirement-slug}-{n}` ID with a `(boundary)` note, hangs off the same task
+number (`2.1 △`, not a new planned subtask), and carries its own RED → GREEN. Add
+one such row only for a behavior you actually triangulated; omit it entirely
+otherwise. Its `REFACTOR` cell folds into the parent task's cleanup. This row is
+never required and its absence is never flagged — `sdd-verify` audits only the
+mandatory RED evidence on the primary rows above.
 
 ## Running Tests
 
@@ -139,6 +161,9 @@ punitive.
   existing tests or from this file being installed.
 - One scenario per cycle; RED before any implementation; GREEN minimal; REFACTOR
   only under green.
+- TRIANGULATE is OPTIONAL and sits between GREEN and REFACTOR: for a behavior with a
+  real boundary, add ONE more test for the same scenario before refactoring, and loop
+  back to GREEN if it exposes a gap. It never renames the cycle and is never required.
 - RED evidence (captured failing output) is mandatory per task — it is the proof
   the test is meaningful.
 - Assert behavior from the spec scenario, not implementation internals.

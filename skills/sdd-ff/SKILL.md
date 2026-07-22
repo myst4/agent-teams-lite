@@ -29,9 +29,14 @@ It is user-invocable as `/sdd-ff <change-name>`.
 
 Recover the change's DAG state via the **Recovery Rule** in `skills/_shared/persistence-contract.md`
 (same procedure as `sdd-continue`). Read the pipeline settings (`artifact_store.mode`,
-`compliance_mode`, `tdd.enabled`, `tdd.single_test_command`) ONCE and propagate them into every
-sub-agent prompt — a propagated value always wins over any stale value in `config.yaml` or the context
-artifact.
+`execution_mode`, `compliance_mode`, `tdd.enabled`, `tdd.single_test_command`) ONCE and propagate them
+into every sub-agent prompt — a propagated value always wins over any stale value in `config.yaml` or
+the context artifact.
+
+`sdd-ff` IMPLIES `execution_mode: auto` for every phase it fast-forwards, regardless of the configured
+value — fast-forwarding IS the auto behavior. Propagate `auto` (not the stored `execution_mode`) so the
+downstream phases and gates agree this run is unattended. The universal stop conditions in step 3 still
+apply.
 
 ### 2. Fast-forward the remaining PLANNING phases (default scope)
 
@@ -72,6 +77,9 @@ each phase produced (its **Section D** `executive_summary`) and the recommended 
 
 - You are the ORCHESTRATOR here. Delegate every phase; never execute planning work inline.
 - Auto-continue between planning phases; the whole point of `sdd-ff` is to skip inter-phase gates.
+- `sdd-ff` always runs in `auto`: it fast-forwards regardless of the configured `execution_mode` and
+  propagates `auto` downstream — the stop conditions below (blocked, FAIL/CRITICAL, implementation
+  boundary, never auto-archive) are what bound the run, not a `supervised` setting.
 - Default scope is planning (propose → spec → design → tasks); stop at the implementation boundary.
 - Stop immediately on any `status: blocked` or FAIL/CRITICAL verdict.
 - Never auto-archive; archive is an explicit, verify-gated, potentially destructive step.

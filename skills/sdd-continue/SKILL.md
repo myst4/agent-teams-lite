@@ -36,8 +36,10 @@ Recover the DAG state for the change using the **Recovery Rule** and **State Per
 - `hybrid` → filesystem `state.yaml` first (authoritative), Engram mirror as fallback
 - `none` → state was not persisted; explain to the user that the change cannot be recovered
 
-Also read the pipeline settings (`artifact_store.mode`, `compliance_mode`, `tdd.enabled`,
-`tdd.single_test_command`) once and propagate them into every sub-agent prompt (propagated value wins).
+Also read the pipeline settings (`artifact_store.mode`, `execution_mode`, `compliance_mode`,
+`tdd.enabled`, `tdd.single_test_command`) once and propagate them into every sub-agent prompt
+(propagated value wins). `execution_mode` (`supervised` | `auto`, default `supervised`) decides
+whether the gate in step 4 stops for the user or auto-advances.
 
 ### 2. Determine the next dependency-ready phase
 
@@ -59,15 +61,23 @@ Project Standards.
 
 ### 4. Present and gate
 
-Present the phase result (its **Section D** `executive_summary` and `next_recommended`). Ask the user
-whether to proceed to the following phase. `sdd-continue` advances ONE dependency step per invocation —
-use `/sdd-ff` to batch multiple phases.
+Present the phase result (its **Section D** `executive_summary` and `next_recommended`). What happens
+next depends on `execution_mode`:
+
+- **`supervised` (default)**: Ask the user whether to proceed to the following phase and STOP.
+  `sdd-continue` advances ONE dependency step per invocation — use `/sdd-ff` to batch planning phases.
+- **`auto`**: Do NOT stop to ask — auto-advance through the dependency-ready phases in the same
+  invocation, halting only on a `status: blocked` return, a `sdd-verify` FAIL/CRITICAL, or before
+  `archive` (which is never auto-run in any mode). Present ONE combined summary at the end.
 
 ## Rules
 
 - You are the ORCHESTRATOR here. Delegate the next phase; never execute it inline.
 - Always recover state from the store that matches the resolved mode before deciding the next phase.
-- Advance exactly one dependency-ready step (or one parallel `spec ‖ design` pair) per invocation.
+- Honor `execution_mode`: in `supervised` (default) advance exactly one dependency-ready step (or one
+  parallel `spec ‖ design` pair) per invocation, then stop and ask; in `auto` auto-advance the
+  dependency-ready phases, halting only on `status: blocked`, a verify FAIL/CRITICAL, or before
+  `archive` (never auto-run in any mode).
 - Pass upstream artifacts by reference, not by inlining their content.
 - If a required upstream artifact is missing, the delegated phase returns `status: blocked` naming it —
   surface that and recommend the phase that produces it.

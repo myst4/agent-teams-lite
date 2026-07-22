@@ -34,9 +34,144 @@ Use this skill when:
 2. Create branch: type/description (see Branch Naming below)
 3. Implement changes with conventional commits
 4. Run shellcheck on modified scripts
-5. Open PR using the template
-6. Add exactly one type:* label
-7. Wait for automated checks to pass
+5. Run the Review Workload Guard — measure the diff against the base and pick a Delivery Strategy
+6. Open PR(s) using the template — a single PR or a stacked chain per the guard's verdict
+7. Add exactly one type:* label to each PR
+8. Wait for automated checks to pass
+```
+
+---
+
+## Review Workload Guard
+
+Run this **before assembling any PR** — after implementation and shellcheck (Workflow
+step 5), before `gh pr create`. It measures the change against the base branch and
+decides whether the work ships as one PR or must be partitioned into a chain.
+
+```bash
+# Base branch the PR will target (usually main)
+BASE=main
+
+# 1. Human-readable overview of the change
+git diff --stat "origin/$BASE"...HEAD
+
+# 2. Authored changed lines (added + deleted)
+git diff --numstat "origin/$BASE"...HEAD | awk '{n += $1 + $2} END {print "changed lines:", n}'
+#    Subtract generated artifacts from this count — files produced by
+#    scripts/build-examples.sh, *.golden snapshots, and vendored code are generated,
+#    not authored. The guard's threshold is about AUTHORED lines.
+
+# 3. Files changed
+git diff --name-only "origin/$BASE"...HEAD | awk 'END {print "files:", NR}'
+
+# 4. Distinct top-level modules touched
+git diff --name-only "origin/$BASE"...HEAD | awk -F/ '{print $1}' | sort -u | awk 'END {print "modules:", NR}'
+```
+
+**Partition trigger** — do NOT ship a single PR when **either** holds:
+
+- authored changed lines **> ~400**, **or**
+- the change touches **> 8 files** spread across **> 3 top-level modules**.
+
+**Verdict:**
+
+- **Neither trigger fires** → the work can ship as a single PR. Continue to
+  Delivery Strategy for the risk check.
+- **Any trigger fires** → do NOT open one big PR. Partition the work into a stacked
+  chain (see Chain Strategy) and apply the matching Delivery Strategy.
+
+**Escape hatch (explicit override).** The user may deliberately choose a single large
+PR even when the guard fires — but only when they ask for it **explicitly**. Record it
+in the PR body as a conscious decision so the reviewer knows the guard was overridden:
+
+```markdown
+### Review Workload
+> Guard fired: ~620 authored lines across 11 files / 4 modules.
+> Single-PR delivery chosen explicitly by @<user> despite the guard.
+> Reviewer: expect a large diff.
+```
+
+---
+
+## Delivery Strategy
+
+Once the guard has measured the change, pick exactly one size mode. Risk-domain
+handling stacks on top of the size decision (a large auth change is both a chain
+**and** risk-flagged).
+
+| Change profile | Delivery mode |
+|----------------|--------------|
+| Small, low-risk — both guard triggers clear, no risky domain | **Single direct PR** (base `main`) |
+| Large — either guard trigger fired | **Stacked chain of PRs** (see Chain Strategy) |
+| Risky domain — touches auth, payments, data, or security — **at any size** | Chosen size mode **+ risk flag + mandatory rollback note** in the PR body |
+
+Risky-domain PRs MUST include both blocks in the body — a risky-domain PR without a
+filled-in rollback note is not ready to open:
+
+```markdown
+### ⚠️ Risk Flag
+Domain: <auth | payments | data | security>
+Blast radius: <what breaks if this ships wrong>
+
+### Rollback
+- Revert: `git revert <merge-commit-sha>` (or `gh pr revert <n>`)
+- Data / migration undo: <concrete steps, or "none — code-only">
+- Post-rollback check: <command that confirms recovery>
+```
+
+---
+
+## Chain Strategy
+
+When the guard says partition, split the change into independently reviewable units
+and stack them.
+
+**Rules:**
+
+- **One branch per work unit**, named `feat/{change}-{n}-{slug}` — `{change}` is the
+  change id/topic, `{n}` is the 1-based order, `{slug}` is a short kebab description.
+  Must still satisfy the Branch Naming regex below (lowercase, `a-z0-9._-` only).
+- **Each PR is standalone reviewable** — it passes on its own, links its own
+  `status:approved` issue, and carries exactly one `type:*` label. Every Critical Rule
+  applies to every PR in the chain.
+- **base = previous PR's branch** (the first unit bases on `main`).
+- **Merge order is documented** in every PR body.
+
+```bash
+# Unit 1 — bases on main
+git checkout -b feat/authflow-1-token-store main
+# ...implement + commit unit 1...
+git push -u origin feat/authflow-1-token-store
+gh pr create --base main \
+  --title "feat(auth): add token store" \
+  --body "Closes #101"
+
+# Unit 2 — bases on unit 1's branch (stacked)
+git checkout -b feat/authflow-2-refresh feat/authflow-1-token-store
+# ...implement + commit unit 2...
+git push -u origin feat/authflow-2-refresh
+gh pr create --base feat/authflow-1-token-store \
+  --title "feat(auth): add refresh flow" \
+  --body "Closes #102"
+```
+
+Document the order in every chained PR body:
+
+```markdown
+### Chain
+Part 2 of 3 — merge order: #101 → #102 → #103.
+Base PR: #101 (must merge first).
+```
+
+**After a base PR merges**, re-parent the next unit onto the new base and retarget
+its PR:
+
+```bash
+# #101 merged into main → re-base unit 2 onto main
+git checkout feat/authflow-2-refresh
+git rebase --onto main feat/authflow-1-token-store
+git push --force-with-lease
+gh pr edit <unit-2-pr> --base main
 ```
 
 ---

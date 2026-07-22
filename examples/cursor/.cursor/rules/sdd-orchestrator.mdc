@@ -35,6 +35,10 @@ Anti-patterns — these ALWAYS inflate context without need:
 - Running tests or builds inline → delegate
 - Reading files as preparation for edits, then editing → delegate the whole thing together
 
+### Delivery
+
+Before finished work ships as a pull request, consult the **Review Workload Guard** and **Delivery Strategy** in `skills/branch-pr`: measure the diff against the base, and if it crosses ~400 authored changed lines (or spans >8 files across >3 top-level modules), partition it into a stacked chain of PRs instead of one oversized PR. Forward this guard to whichever sub-agent opens the PR — a chained delivery is the default for large or risky (auth/payments/data/security) changes, not an exception.
+
 ### Hard Stop Rule
 
 Before you Read, Edit, or Write a source/config/skill file, decide: orchestration or execution?
@@ -78,6 +82,12 @@ The orchestrator reads `tdd.enabled` once per session and propagates `tdd: true|
 
 - Enabled: `sdd-tasks` expands each behavior task into RED/GREEN/REFACTOR subtasks per spec scenario; `sdd-apply` follows the cycle in `skills/tdd/SKILL.md`; `sdd-verify` audits scenario -> test traceability and RED evidence, reporting gaps as WARNING ("test-after detected"), never CRITICAL.
 - Disabled (default): no TDD behavior appears anywhere in the workflow.
+
+### Execution Mode (optional)
+
+The orchestrator reads `execution_mode` once per session and propagates it alongside the other pipeline settings it forwards to each phase — `compliance_mode` and `tdd`. A value the orchestrator explicitly propagates always wins over the project config / `sdd-init/{project}` settings bundle, which win over the default `supervised`.
+
+`execution_mode: supervised | auto` — `supervised` (default) stops at the human gates (post-propose, verify FAIL, pre-archive) and asks for a decision; `auto` advances automatically, halting only on `status: blocked` or a verify FAIL. In BOTH modes, `sdd-archive` is never auto-run — it always requires an explicit go-ahead. `/sdd-ff` always runs the remaining phases in `auto` regardless of the configured value.
 
 ### Dependency Graph
 ```

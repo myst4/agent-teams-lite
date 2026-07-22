@@ -71,6 +71,14 @@ Read the project to understand:
     the user enables TDD, also capture the fast single-test invocation for a quick RED cycle →
     `tdd.single_test_command` (e.g. `npm test -- {file}`, `pytest {path}::{test}`, `go test -run {TestX} ./pkg`).
     The full-suite `test_command` stays in `rules.verify` regardless.
+- **Execution mode (explicit question — default `supervised`)**: Ask the user directly:
+  **"Run SDD in `supervised` or `auto` mode?"** `supervised` (the default) stops the orchestrator
+  at every human decision gate — after `propose`, on a `sdd-verify` FAIL, and before `archive` — so
+  the user approves each step. `auto` lets the orchestrator continue through those gates without
+  asking, halting only on `status: blocked` or a `sdd-verify` FAIL/CRITICAL (archive is never
+  auto-run in either mode). Record the answer as `execution_mode` (default `supervised` when the
+  user does not choose). Note for the user: `/sdd-ff` always fast-forwards its phases in `auto`
+  regardless of this setting.
 
 ### Step 2: Initialize Persistence Backend
 
@@ -91,6 +99,8 @@ Based on what you detected, create the config when in `openspec` mode:
 ```yaml
 # openspec/config.yaml
 schema: spec-driven
+
+execution_mode: supervised  # supervised | auto; supervised stops at human gates, auto continues unless blocked/verify FAIL
 
 context: |
   Tech stack: {detected stack}
@@ -132,7 +142,7 @@ tdd:
   single_test_command: ""      # e.g. "npm test -- {file}"; runs ONE test/scenario for a fast RED cycle
 ```
 
-The `verify` and `tdd` blocks above are the canonical schema from
+The `execution_mode`, `verify`, and `tdd` blocks above are the canonical schema from
 `skills/_shared/openspec-convention.md`. Fill `test_command`/`build_command`
 with the commands you detected in Step 1 (test runner, build script), or leave
 them empty when none exists; leave `coverage_threshold` at `0` unless the
@@ -140,7 +150,8 @@ project enforces a coverage gate. Set `compliance_mode` to the default you chose
 in Step 1: `behavioral` when test infrastructure exists, `static` when it does
 not. Set `tdd.enabled` from the explicit question in Step 1 (default `false`); when
 the user opts in, fill `tdd.single_test_command` with the fast single-test
-invocation. Existing test files never flip `tdd.enabled` on their own.
+invocation. Existing test files never flip `tdd.enabled` on their own. Set
+`execution_mode` from the explicit question in Step 1 (default `supervised`).
 
 ### Step 4: Build Skill Registry
 
@@ -161,6 +172,7 @@ See `skills/skill-registry/SKILL.md` for the full registry format and scanning d
 for the settings that steer the whole cycle:
 
 - `artifact_store.mode`: `engram | openspec | hybrid | none`
+- `execution_mode`: `supervised | auto` (chosen in Step 1)
 - `compliance_mode`: `behavioral | static` (chosen in Step 1)
 - `test_command`, `build_command`, `coverage_threshold` (detected in Step 1)
 - `tdd.enabled`: `true | false` (from the explicit TDD question in Step 1 — the single switch for the optional TDD module)
@@ -207,6 +219,7 @@ Phase-specific fields to surface in `detailed_report` (adapt wording to the mode
 - **Project**: {name}
 - **Stack**: {detected stack}
 - **Persistence**: {engram | openspec | hybrid | none}
+- **Execution mode**: {supervised | auto} — {user's answer to the explicit question}
 - **Compliance mode**: {behavioral | static} — {test infra detected? one-line rationale}
 - **TDD**: {enabled | disabled} — {user's answer to the explicit question; single_test_command if enabled}
 - **Settings home**: `sdd-init/{project}` context artifact (engram/none) or `openspec/config.yaml` (openspec/hybrid)

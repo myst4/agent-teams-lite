@@ -87,6 +87,18 @@ by detecting test infra. This key is the settings home for `openspec`/`hybrid` m
 the orchestrator propagates it (with the other pipeline settings) into every phase
 prompt, where a propagated value wins over a stale file value.
 
+`execution_mode` (`supervised` | `auto`) controls whether the orchestrator halts at the human
+decision gates. `supervised` (the default) makes the orchestrator STOP and ask for a decision at
+each human gate — after `propose`, on a `sdd-verify` FAIL, and before `archive`. `auto` lets the
+orchestrator continue through those gates without asking, halting ONLY when a phase returns
+`status: blocked` or `sdd-verify` reports FAIL/CRITICAL (archive is still never auto-run — it
+always needs an explicit go-ahead). `sdd-init` asks for the mode at initialization (default
+`supervised`). This top-level key is the settings home for `openspec`/`hybrid` mode; in `engram`
+mode the same setting lives in the `sdd-init/{project}` context artifact, and the orchestrator
+propagates it (with the other pipeline settings) into every phase prompt, where a propagated value
+wins over a stale file value (same precedence as `compliance_mode` and `tdd`). `sdd-ff` always
+fast-forwards its phases in `auto` regardless of this setting — fast-forwarding IS the auto behavior.
+
 The top-level `tdd` block is the single switch for the OPTIONAL TDD module. It holds
 EXACTLY two keys: `enabled` (bool) and `single_test_command` (string). `enabled` is the
 ONLY activator of the RED → GREEN → REFACTOR workflow — there are NO silent heuristics
@@ -106,6 +118,8 @@ runner table.
 ```yaml
 # openspec/config.yaml
 schema: spec-driven
+
+execution_mode: supervised  # supervised | auto; supervised stops at human gates, auto continues unless blocked/verify FAIL
 
 context: |
   Tech stack: {detected stack}
