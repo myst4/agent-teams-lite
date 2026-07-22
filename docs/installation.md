@@ -8,6 +8,8 @@ For the automated setup, run:
 For manual installation or specific tools, see below.
 
 ## Table of Contents
+- [Install scope: global vs. project (trial a repo)](#install-scope-global-vs-project-trial-a-repo)
+- [Engram (optional persistence engine)](#engram-optional-persistence-engine)
 - [Claude Code](#claude-code)
 - [OpenCode](#opencode)
 - [Gemini CLI](#gemini-cli)
@@ -17,6 +19,8 @@ For manual installation or specific tools, see below.
 - [Cursor](#cursor)
 - [Pi](#pi)
 - [Other Tools](#other-tools)
+- [Maintenance: update, doctor, uninstall](#maintenance-update-doctor-uninstall)
+- [Smoke test](#smoke-test)
 - [Editing the Generated Example Orchestrators](#editing-the-generated-example-orchestrators)
 
 ---
@@ -36,10 +40,25 @@ Windows PowerShell:
 
 The setup script:
 - Detects installed agents via PATH (`claude`, `opencode`, `gemini`, `cursor`, `code`, `codex`, `pi`)
-- Copies skills to the correct user-level directory
+- Copies skills to the correct directory (user-level by default; per-repo with `--scope project`)
 - Configures orchestrator prompts with idempotent markers (safe to re-run)
+- Installs native subagents where the harness supports them — **17 Claude Code
+  agents** into `~/.claude/agents/`, and **17 Pi agents** into
+  `~/.pi/agent/agents/` (see the per-harness sections)
+- For **Claude Code, always installs the deterministic hooks** (both scopes, no
+  prompt — see [Hooks below](#hooks-installed-automatically))
 - Handles OpenCode's special case (commands + JSON config merge)
 - For OpenCode: asks single vs multi-model mode (or use `--opencode-mode`)
+- Asks **once** whether to use [Engram](#engram-optional-persistence-engine) as
+  the persistence engine (or use `--with-engram` / `--without-engram`)
+
+Two flags control **where** it installs:
+
+| Flag | Meaning |
+|------|---------|
+| `--scope global` | (default) install to the per-user agent config dirs (`~/.claude`, `~/.pi`, …). |
+| `--scope project` | install **everything into one git repo** to trial Kurama there — skills, native agents, hooks, and the orchestrator merge all land under the repo (see [Install scope](#install-scope-global-vs-project-trial-a-repo)). |
+| `--path <repo>` | the target repo for `--scope project` (default: current directory). |
 
 The default skill set installs **25 skills**, including two optional modules that
 ship on disk but stay inert until you opt in per project: the TDD module
@@ -62,12 +81,99 @@ per-project switch (see [docs/tdd.md](tdd.md) and [docs/kanban-github.md](kanban
 
 ---
 
+## Install scope: global vs. project (trial a repo)
+
+By default `setup.sh` installs **globally** — into the per-user config dirs
+(`~/.claude`, `~/.pi`, …), available across every project. That is the right
+mode once you have decided to adopt Kurama.
+
+**To try Kurama in a single repository without touching your global config,
+use project scope.** `--scope project` installs *everything* into one target
+repo, so you can evaluate it in isolation and remove it cleanly afterward:
+
+```bash
+./scripts/setup.sh --agent claude-code --scope project --path /path/to/your/repo
+./scripts/setup.sh --agent claude-code --scope project    # --path defaults to the current directory
+```
+
+`--path` (which **only** applies with `--scope project`, and **wins** when
+given) is validated before anything is written: it must **exist**, be a **git
+repository**, and must **never be the Kurama repo itself**. In non-interactive
+mode a non-repo path **aborts**; interactively you are asked once before
+proceeding.
+
+Where project scope writes, per harness:
+
+| Harness | Skills | Native agents | Orchestrator | Hooks | Receipt |
+|---------|--------|---------------|--------------|-------|---------|
+| Claude Code | `<repo>/.claude/skills/` | `<repo>/.claude/agents/` | `<repo>/CLAUDE.md` (marker merge) | `<repo>/.claude/hooks/kurama/` + `<repo>/.claude/settings.json` | `<repo>/.kurama-install-manifest.json` |
+| Pi | `<repo>/.pi/skills/` | `<repo>/.pi/agents/` | `<repo>/AGENTS.md` (marker merge) | — | `<repo>/.kurama-install-manifest.json` |
+| Others | `<repo>/.claude/skills/` | — | `<repo>/CLAUDE.md` (best-effort) | — | `<repo>/.kurama-install-manifest.json` |
+
+The install **receipt** (`.kurama-install-manifest.json`) lands at the **repo
+root** for project scope (in the skills dir for global scope), and records the
+scope, version, every installed file, the touched `settings.json`, any Pi
+packages, and any Engram MCP registrations — so `uninstall.sh`, `update.sh`,
+and `doctor.sh` (all of which accept the same `--scope`/`--path`) operate on
+exactly what was installed. `setup.ps1` mirrors this with `-Scope project`
+`-Path <repo>`.
+
+---
+
+## Engram (optional persistence engine)
+
+By default Kurama persists SDD artifacts to its built-in **markdown fallback**
+(`openspec/` / `.kurama/`) — no external dependency. Optionally, it can use
+[Engram](https://github.com/Gentleman-Programming/engram) as a persistent memory
+engine that survives compaction and cross-session recovery.
+
+`setup.sh` asks **once per run** — `Use Engram as the persistence engine? [y/N]`
+— or you can decide non-interactively with `--with-engram` / `--without-engram`
+(non-interactive default is **no**). `setup.ps1` mirrors this with
+`-WithEngram` / `-WithoutEngram`.
+
+**With yes**, setup does two things:
+
+1. **Ensures the `engram` binary.** If it is not on `PATH`: on macOS with
+   Homebrew it offers (with explicit consent) to run
+   `brew tap Gentleman-Programming/homebrew-tap && brew install engram`;
+   otherwise it prints the
+   [releases guide](https://github.com/Gentleman-Programming/engram/releases)
+   and continues without blocking (the MCP registration still lands and
+   activates once the binary is present). This is the only place setup runs a
+   network command, and only after you say yes.
+2. **Registers the Engram MCP server into the client being configured.** The
+   exact config file and JSON shape differ per client (replicating gentle-ai's
+   shapes). JSON edits go through **jq** with a backup and an atomic write; if
+   `jq` is missing it prints guided manual steps and **never** `sed`-edits JSON.
+   Codex uses TOML (`[mcp_servers.engram]`, block-upserted).
+
+| Client | Config file (global) | Config file (project scope) | Key / shape |
+|--------|----------------------|-----------------------------|-------------|
+| Claude Code | `~/.claude.json` | `<repo>/.mcp.json` | `mcpServers.engram = { command, args: ["mcp","--tools=agent"] }` |
+| OpenCode | `~/.config/opencode/opencode.json` | `<repo>/opencode.json` | `mcp.engram = { command: [cmd,"mcp","--tools=agent"], type: "local" }` |
+| Cursor | `~/.cursor/mcp.json` | `<repo>/.cursor/mcp.json` | `mcpServers.engram` |
+| Gemini CLI | `~/.gemini/settings.json` | `<repo>/.gemini/settings.json` | `mcpServers.engram` |
+| VS Code | `~/Library/Application Support/Code/User/mcp.json` (macOS; `~/.config/Code/User/mcp.json` Linux; `%APPDATA%\Code\User\mcp.json` Windows) | `<repo>/.vscode/mcp.json` | `servers.engram` (VS Code uses `servers`, not `mcpServers`) |
+| Codex | `~/.codex/config.toml` | *(skipped — Codex has a single global MCP config; run with global scope)* | `[mcp_servers.engram]` (TOML) |
+| Pi | *(nothing extra)* | *(nothing extra)* | Engram on Pi is provided by the [Pi package stack](#optional-pi-package-stack) (`gentle-engram`) — no separate MCP registration |
+
+**With no**, nothing Engram-related is written; the harness stays on the
+markdown fallback (`openspec/` / `.kurama/`), and the setup summary says so.
+Every file Engram registration touches is recorded in the install receipt
+(`engram_mcp[]`), so `doctor.sh` can report them and `uninstall.sh` can **remove
+the `engram` server** from each one — jq for JSON (or the same block strip for
+Codex's TOML), backup + atomic, leaving every other MCP server and key intact.
+
+---
+
 ## Claude Code
 
 > **Automatic:** `./scripts/setup.sh --agent claude-code` handles all steps below,
-> and additionally installs the **17 native subagents** into `~/.claude/agents/`
+> additionally installs the **17 native subagents** into `~/.claude/agents/`
 > (see [Native subagents](#native-subagents-installed-automatically) at the end of
-> this section).
+> this section), and **always installs the deterministic hooks** (see
+> [Hooks (installed automatically)](#hooks-installed-automatically)).
 
 <details>
 <summary>Manual installation</summary>
@@ -123,9 +229,31 @@ for the full roster and the model/tools table.
 Installing the agents changes nothing about how skills or the orchestrator
 behave — a project that removes them keeps working exactly as before, with the
 orchestrator resolving models and skills itself per the Model Assignments table
-in [`examples/claude-code/CLAUDE.md`](../examples/claude-code/CLAUDE.md). **Hooks
-are not installed by setup** — wire `examples/claude-code/hooks/` yourself if you
-want the deterministic gates (see [docs/hooks.md](hooks.md)).
+in [`examples/claude-code/CLAUDE.md`](../examples/claude-code/CLAUDE.md).
+
+<a id="hooks-installed-automatically"></a>
+**Hooks (installed automatically).** `setup.sh --agent claude-code` now
+**always installs the two deterministic-gate hooks** — no prompt, in **both**
+scopes (this changed in Phase 10b; earlier versions left hooks opt-in). It:
+
+1. Copies the two scripts from `examples/claude-code/hooks/`
+   (`orchestrator-write-guard.sh`, `archive-gate.sh`) into the target's
+   `hooks/kurama/` directory — `~/.claude/hooks/kurama/` (global) or
+   `<repo>/.claude/hooks/kurama/` (project) — atomically, and marks them
+   executable.
+2. Merges a `PreToolUse` block into the matching `settings.json`
+   (`~/.claude/settings.json` global, `<repo>/.claude/settings.json` project):
+   `Edit|Write|MultiEdit` → the write-guard, `Task|Skill` → the archive-gate.
+   Project scope anchors the commands on `$CLAUDE_PROJECT_DIR`; global scope
+   uses absolute paths. Every command string contains the substring
+   `hooks/kurama/`, so `uninstall.sh` can strip exactly Kurama's entries and
+   leave your other hooks intact.
+
+The merge is **careful and idempotent**: it removes any prior kurama entries
+before re-adding, prefers **jq** (backup + atomic write), and — when `jq` is
+missing — prints the exact manual steps rather than ever `sed`-editing JSON.
+Both the scripts and the touched `settings.json` are recorded in the install
+receipt. See [docs/hooks.md](hooks.md) for what each gate enforces.
 
 ---
 
@@ -386,12 +514,15 @@ concatenating a global `~/.pi/agent/AGENTS.md` and a project-root `AGENTS.md`
 `gentle-pi` npm dependency.
 
 > **Automatic:** `./scripts/setup.sh --agent pi` handles Pi setup — it detects the
-> `pi` binary, copies the skills into `~/.pi/agent/skills/`, and merges the
-> orchestrator into the global `~/.pi/agent/AGENTS.md`, using the standard
-> idempotent `<!-- BEGIN:kurama -->` / `<!-- END:kurama -->` markers (`AGENTS.md`
-> is Markdown, so the HTML-comment markers merge cleanly and re-runs stay safe).
-> For a per-project rule instead of the global one, follow the manual step below
-> and append the orchestrator to your project-root `AGENTS.md`.
+> `pi` binary, copies the skills into `~/.pi/agent/skills/`, installs the **17
+> native Pi agents** into `~/.pi/agent/agents/` (see
+> [Native Pi subagents](#native-pi-subagents-installed-automatically)), and
+> merges the orchestrator into the global `~/.pi/agent/AGENTS.md`, using the
+> standard idempotent `<!-- BEGIN:kurama -->` / `<!-- END:kurama -->` markers
+> (`AGENTS.md` is Markdown, so the HTML-comment markers merge cleanly and re-runs
+> stay safe). For a per-project rule instead of the global one, follow the manual
+> step below and append the orchestrator to your project-root `AGENTS.md`
+> (`--scope project` installs the agents into `<repo>/.pi/agents/` instead).
 
 <details>
 <summary>Manual installation</summary>
@@ -415,6 +546,40 @@ and re-runnable.
 > **Note:** Pi routes models per-agent, so no orchestrator-level model table is
 > injected. Like Gemini CLI and Codex, Pi reads the skills as inline instructions
 > rather than spawning true fresh-context sub-agents.
+
+<a id="native-pi-subagents-installed-automatically"></a>
+### Native Pi subagents (installed automatically)
+
+Alongside the skills and orchestrator, `setup.sh --agent pi` installs **17
+Pi-format agents** — the same roster as Claude Code (the 9 SDD phases plus the 8
+review-layer agents: the four 4R lenses, the refuter, the two Judgment Day
+judges, and the fix agent) — into `~/.pi/agent/agents/` (global) or
+`<repo>/.pi/agents/` (project scope), each recorded in the receipt.
+
+They are written in **Pi's** agent format, which differs from Claude's:
+
+- `tools` is a **YAML list** of Pi tool names (`read`, `grep`, `find`, `bash`,
+  `write`, `edit`, `memory_search`/`memory_get`/`memory_add`/`memory_update`).
+  The read-only lenses, refuter, and judges declare `tools: [read]`; the
+  `jd-fix-agent` declares `[read, bash]`; the SDD phase executors carry the
+  fuller phase toolset. Pi additionally blocks every `subagent_*` tool, so these
+  agents structurally cannot delegate.
+- `model` is `provider/model-id` — `anthropic/claude-sonnet-4-5` for the 4R
+  lenses (and the lighter SDD phases), `anthropic/claude-opus-4-8` for the
+  refuter, both judges, the fix agent, and the `sdd-design`/`sdd-apply` phases —
+  with an `effort` hint where applicable.
+- The body **is** the complete system prompt (Pi's lean subagent mode
+  auto-loads no skill or context file). Each agent instructs itself to `read`
+  its Kurama skill, resolving the path relative to the project in order —
+  `skills/…` → `.pi/skills/…` → `~/.pi/agent/skills/…` → `.claude/skills/…` —
+  then follow it and return that skill's envelope. The agent never duplicates
+  the skill body; the skill remains the single source of truth.
+
+Per-agent model/effort in each file are **defaults**. Override them without
+editing the files via `model_profiles` in `.pi/subagents.json` (project) or
+`~/.pi/agent/subagents.json` (global) — see the `subagents-configuration` skill
+shipped with the `pi-subagents` extension. Kurama does **not** write
+`subagents.json`; it is documented here as the recommended override surface.
 
 ### Optional Pi package stack
 
@@ -469,6 +634,73 @@ The skills are pure Markdown. Any AI assistant that can read files can use them.
 **3. Adapt the sub-agent pattern:**
 - If your tool has a Task/sub-agent mechanism → use the pattern from `examples/claude-code/CLAUDE.md`
 - If not → the orchestrator reads the skills inline (still works, just uses more context)
+
+---
+
+## Maintenance: update, doctor, uninstall
+
+All three maintenance scripts are **receipt-driven** — they read the
+`.kurama-install-manifest.json` that setup wrote — and they accept the same
+`--scope global|project` / `--path <repo>` selectors, so they operate on exactly
+what was installed (global agent dirs by default, or a trial repo).
+
+**`update.sh` — re-sync from the current checkout.** After you `git pull` the
+Kurama repo (the script never pulls or mutates your clone), `update.sh`
+re-runs the idempotent installer for every recorded target and reports which
+recorded files changed plus the version stamp before → after. It re-syncs
+skills, native agents, hooks, and the orchestrator merge, and stamps the new
+version — user-created files are never touched, and it never re-installs the Pi
+package stack.
+
+```bash
+./scripts/update.sh                              # re-sync every global receipt
+./scripts/update.sh --agent claude-code          # one global agent
+./scripts/update.sh --scope project --path /repo # a project-scope install
+./scripts/update.sh --agent pi --dry-run         # report drift, change nothing
+```
+
+**`doctor.sh` — read-only health check.** Touches nothing; prints a green/red
+line per check and exits non-zero on any hard failure. It verifies: the receipt
+and each recorded file exist (missing = fail) and match the repo source
+(drift = warning), the installed version vs the repo `VERSION`, balanced
+orchestrator markers, the Claude Code hooks (scripts + the `settings.json`
+block), the recorded Engram MCP registrations, and the environment tooling
+(`gh` present + authenticated + project scope, `pi` + the package stack via
+`pi list`, `engram` present + responding).
+
+```bash
+./scripts/doctor.sh                              # every global agent with a receipt
+./scripts/doctor.sh --agent claude-code
+./scripts/doctor.sh --scope project --path /repo
+```
+
+**`uninstall.sh` — remove exactly what was installed.** Removes every file the
+receipt recorded (skills, agents, hooks), **surgically strips** the Kurama
+`hooks/kurama/` block from `settings.json` (jq, with a backup) while leaving
+your other hooks intact, prunes only emptied directories, and — for Pi — can
+**offer to revert the Pi packages** Kurama installed (`--with-pi-packages` /
+`--without-pi-packages`; interactive default is no). `--dry-run` shows what
+would be removed.
+
+```bash
+./scripts/uninstall.sh --agent claude-code
+./scripts/uninstall.sh --scope project --path /repo   # clean removal from a trial repo
+./scripts/uninstall.sh --agent pi --with-pi-packages  # also revert the Pi package stack
+```
+
+> `setup.ps1` mirrors `-Scope`/`-Path`, the always-on hooks, and Engram on
+> Windows. The maintenance scripts (`update.sh`/`doctor.sh`/`uninstall.sh`) and
+> the test shims are **bash-only** — the PowerShell parity gap is unchanged from
+> earlier phases.
+
+---
+
+## Smoke test
+
+Before trusting an install end-to-end, run the manual smoke test: a ~15-minute
+walk through the full SDD cycle (`init → new → ff → apply → verify → archive`) in
+a throwaway toy project, once per persistence mode. It lists exactly what to
+verify at each gate. See [docs/smoke-test.md](smoke-test.md).
 
 ---
 

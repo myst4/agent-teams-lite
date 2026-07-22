@@ -257,6 +257,12 @@ by prose alone. See docs/hooks.md for the rationale.
 copy `examples/claude-code/hooks/` yourself if you want the gates enforced
 mechanically.
 
+> **Superseded by Phase 10b (below).** As of Phase 10b the Claude Code hooks
+> **are** installed automatically by `setup.sh --agent claude-code` (both
+> scopes, no prompt). The "copy them yourself / not installed by default" note
+> above is historical; re-run `setup.sh --agent claude-code` to land them. See
+> the Phase 10b section.
+
 ## Phase 5 — Delivery guard, execution mode, TDD triangulation
 
 ### `execution_mode` (new top-level config key)
@@ -517,6 +523,11 @@ and skills itself. **Hooks are still not installed by setup** (that decision is
 unchanged) — wire `examples/claude-code/hooks/` yourself if you want the deterministic
 gates.
 
+> **Superseded by Phase 10b (below).** As of Phase 10b the Claude Code hooks **are**
+> installed automatically (both scopes, no prompt). The "wire them yourself" note above
+> is historical; re-run `setup.sh --agent claude-code` to land them. See the Phase 10b
+> section.
+
 ### Optional Pi package stack (opt-in, consent-gated)
 
 `setup.sh`/`setup.ps1 --agent pi` can now install a curated stack of Pi runtime
@@ -539,6 +550,107 @@ conflicts with Kurama's Pi setup over the same orchestration surface.
 **Action required**: none. The stack is opt-in; a plain `setup.sh --agent pi` still only
 wires skills + the orchestrator unless you opt in. Requires `pi` on `PATH`; the packages
 land in your Pi environment, not in this repo.
+
+## Phase 10b — Project scope, always-on hooks, Pi agents, Engram, update/doctor
+
+Phase 10b is the surface-completion pass: it adds a per-repo install scope, makes
+the Claude Code hooks part of the default install, ships the native agents on Pi,
+lets Engram be wired as the persistence engine, and adds `update.sh`/`doctor.sh`.
+No skill counts change. Everything is additive except the hooks default (below).
+
+### `--scope project` / `--path <repo>` (new install scope)
+
+`setup.sh` (and `uninstall.sh`/`update.sh`/`doctor.sh`) gained `--scope
+global|project` (default `global`, the unchanged behavior) and `--path <repo>`.
+`--scope project` installs **everything into one git repo** — skills to
+`<repo>/.claude/skills/` (or `<repo>/.pi/skills/`), native agents to
+`<repo>/.claude/agents/` (or `<repo>/.pi/agents/`), the orchestrator merged into
+the repo's `CLAUDE.md`/`AGENTS.md`, the Claude hooks into
+`<repo>/.claude/hooks/kurama/` + `<repo>/.claude/settings.json`, and the install
+receipt at the **repo root** — so you can trial Kurama in one project without
+touching your global config, then remove it cleanly. `--path` applies only with
+`--scope project`, defaults to the current directory, and is validated (must
+exist, be a git repo, and never be the Kurama repo itself; a non-repo aborts in
+non-interactive mode). `setup.ps1` mirrors this with `-Scope project -Path`.
+
+**Action required**: none. Global scope is the default and byte-compatible with
+prior installs; project scope is strictly opt-in via the new flags.
+
+### Claude Code hooks are now installed by default (behavior change)
+
+Through Phase 10a, `setup.sh --agent claude-code` did **not** install the hooks —
+they were an explicit opt-in you wired yourself. **Phase 10b installs them
+automatically**, in both scopes, with no prompt: the two scripts
+(`orchestrator-write-guard.sh`, `archive-gate.sh`) are copied to the target's
+`hooks/kurama/` directory and a `PreToolUse` block is merged into the matching
+`settings.json` (`Edit|Write|MultiEdit` → write-guard; `Task|Skill` →
+archive-gate). The merge is idempotent (removes prior kurama entries before
+re-adding), prefers `jq` with a backup + atomic write, and prints guided manual
+steps rather than `sed`-editing JSON when `jq` is absent. Every command string
+contains `hooks/kurama/` so `uninstall.sh` strips exactly Kurama's entries.
+
+**Action required**: re-run `setup.sh --agent claude-code` once to land the hooks
+(your existing `settings.json` is backed up first, and only Kurama's block is
+added). If you had previously wired `examples/claude-code/hooks/` by hand, the
+idempotent merge de-duplicates rather than double-adding. To review what the
+gates enforce, see [docs/hooks.md](hooks.md).
+
+### Native Pi subagents installed automatically
+
+`setup.sh --agent pi` now installs the **17 native agents** (the same roster as
+Claude Code — 9 SDD phases + 8 review-layer agents) in **Pi's** format into
+`~/.pi/agent/agents/` (global) or `<repo>/.pi/agents/` (project), recorded in the
+receipt. Pi's format uses a YAML `tools` list of Pi tool names (`[read]` for the
+read-only lenses/refuter/judges, `[read, bash]` for `jd-fix-agent`), a
+`provider/model-id` `model` (`anthropic/claude-sonnet-4-5` lenses /
+`anthropic/claude-opus-4-8` refuter+judges+fix+design+apply), and a lean body
+that reads its Kurama skill via the `read` tool. See
+[docs/sub-agents.md](sub-agents.md#native-pi-subagents-installed-automatically).
+
+**Action required**: none. Re-run `setup.sh --agent pi` to land the agents
+(existing same-named files are backed up first). Override models without editing
+the files via `model_profiles` in `.pi/subagents.json` — Kurama never writes it.
+
+### Engram optional persistence engine
+
+`setup.sh` now asks **once** — `Use Engram as the persistence engine? [y/N]`, or
+`--with-engram` / `--without-engram` (non-interactive default **no**). With yes it
+ensures the `engram` binary (macOS/Homebrew offers `brew tap
+Gentleman-Programming/homebrew-tap && brew install engram` with consent; otherwise
+prints the releases guide and continues) and registers the Engram MCP server into
+the client being configured, replicating gentle-ai's per-client shapes (`mcpServers`
+for Claude/Cursor/Gemini, `mcp` for OpenCode, `servers` for VS Code, TOML
+`[mcp_servers.engram]` for Codex; Pi gets it from the package stack). JSON edits go
+through `jq` with a backup + atomic write and degrade to printed guidance when `jq`
+is missing. With no, the harness keeps its built-in markdown persistence
+(`openspec/` / `.kurama/`). All registrations are recorded in the receipt
+(`engram_mcp[]`). See
+[docs/installation.md](installation.md#engram-optional-persistence-engine).
+
+**Action required**: none — Engram is opt-in. Existing projects keep the markdown
+persistence unless you pass `--with-engram` (or answer yes).
+
+### `update.sh` and `doctor.sh` (new maintenance scripts)
+
+- **`update.sh`** re-syncs an existing install from the current repo checkout. It
+  does **not** `git pull` (you pull first); it reads each receipt, re-runs the
+  idempotent installer for that recorded target + scope, re-stamps the version,
+  and reports which recorded files changed. Flags: `--agent`, `--scope`, `--path`,
+  `--dry-run`. It never re-installs the Pi package stack.
+- **`doctor.sh`** is a read-only health check: receipt + recorded files present
+  (missing = fail) and matching the repo source (drift = warning), installed vs
+  repo version, balanced orchestrator markers, Claude hooks present, recorded
+  Engram MCP registrations, and environment tooling (`gh`/`pi`/`engram`). Green/red
+  per item, non-zero exit on any hard failure. Flags: `--agent`, `--scope`,
+  `--path`.
+
+`uninstall.sh` also gained `--scope`/`--path` and a Pi-package revert offer
+(`--with-pi-packages` / `--without-pi-packages`), and now strips the
+`hooks/kurama/` block from `settings.json` surgically.
+
+**Action required**: none — both new scripts are opt-in tooling. Note that
+`update.sh`/`doctor.sh`/`uninstall.sh` are **bash-only**; the PowerShell parity gap
+is unchanged.
 
 ## Detecting an old install/clone
 

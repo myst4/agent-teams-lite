@@ -187,7 +187,7 @@ kurama/
 │   ├── judgment-day/SKILL.md         ← Dual blind review + fix loop
 │   ├── go-testing/SKILL.md           ← Shared Go test patterns
 │   ├── skill-creator/SKILL.md        ← Creates new skills from templates
-│   ├── tdd/SKILL.md                  ← Optional RED-GREEN-REFACTOR module (opt-in `tdd` group, not installed by default)
+│   ├── tdd/SKILL.md                  ← RED-GREEN-REFACTOR module (`tdd` group, installed by default; activation stays opt-in per project — opt out with `--without tdd`)
 │   ├── issue-creation/SKILL.md       ← GitHub issue creation workflow
 │   └── branch-pr/SKILL.md            ← Branch + pull request workflow
 ├── docs/                              ← Deep-dive documentation
@@ -206,7 +206,7 @@ kurama/
 │   ├── claude-code/
 │   │   ├── CLAUDE.md                  ← GENERATED — edit _templates/, then run scripts/build-examples.sh
 │   │   ├── agents/                    ← Native subagents, one per SDD phase (model: opus for sdd-design/sdd-apply, sonnet for the rest)
-│   │   └── hooks/                     ← Optional PreToolUse + archive-gate hooks (hooks.json + scripts + README); opt-in, not installed by default
+│   │   └── hooks/                     ← PreToolUse write-guard + archive-gate hooks (hooks.json + scripts + README); installed automatically by `setup.sh --agent claude-code` (both scopes, since Phase 10b)
 │   ├── opencode/
 │   │   ├── AGENTS.md                  ← OpenCode orchestrator prompt referenced by config
 │   │   ├── opencode.single.json       ← Orchestrator agent only; phases run as subtasks

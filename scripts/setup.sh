@@ -25,6 +25,42 @@ VERSION_FILE="$REPO_DIR/VERSION"
 # scripts/uninstall.sh can remove exactly what a setup.sh install wrote.
 INSTALL_MANIFEST_NAME=".kurama-install-manifest.json"
 
+# O1: install scope. "global" writes to the per-user agent config dirs (default,
+# unchanged behavior). "project" writes EVERYTHING into a target git repo so a
+# user can trial Kurama in one repo without touching their global config.
+SCOPE="global"      # global | project
+TARGET_PATH=""      # repo root when SCOPE=project (validated; never the Kurama repo)
+
+# O2: Claude Code hooks are ALWAYS installed for the claude-code target (both
+# scopes), no prompt. Scripts land in <target>/hooks/kurama/ and a PreToolUse
+# block is merged into the matching settings.json. Every hook command string
+# contains the substring "hooks/kurama/" so uninstall.sh can filter the block
+# out surgically. The two hook scripts ship in examples/claude-code/hooks/.
+HOOKS_SRC="$EXAMPLES_DIR/claude-code/hooks"
+HOOK_SCRIPTS="orchestrator-write-guard.sh archive-gate.sh"
+
+# Receipt accumulators — filled across install_skills / install_hooks / Pi steps
+# and flushed ONCE by finalize_receipt() at the end of setup_agent, so a single
+# receipt records skills, agents, hooks, the touched settings.json, and any Pi
+# packages installed. Paths in RECEIPT_FILES are relative to RECEIPT_DIR.
+RECEIPT_DIR=""
+RECEIPT_TOOL=""
+RECEIPT_FILES=""
+RECEIPT_SETTINGS=""      # newline list of settings.json paths (relative to RECEIPT_DIR)
+RECEIPT_PI_PACKAGES=""   # newline list of "npm:pkg@ver" specs installed via pi
+RECEIPT_ENGRAM_MCP=""    # O5: newline list of config files an Engram MCP server was written to
+RECEIPT_PROMPTS=""       # newline list of orchestrator prompt files carrying a removable BEGIN:kurama block
+
+# O5: Engram optional persistence engine. setup asks ONCE (or honors the
+# --with-engram/--without-engram flags) whether to wire Engram as the memory
+# backend. With "yes" we ensure the binary (Homebrew on macOS with consent, or a
+# printed guide) and register the Engram MCP server into the client being set up,
+# replicating gentle-ai's per-client server shapes. With "no" the harness keeps
+# its built-in markdown persistence (openspec/.kurama) — mentioned in the summary.
+ENGRAM_RELEASES_URL="https://github.com/Gentleman-Programming/engram/releases"
+ENGRAM_TAP="Gentleman-Programming/homebrew-tap"
+ENGRAM_BINARY_CHECKED=false   # ensure the binary probe/brew prompt runs at most once
+
 # setup.sh installs the DEFAULT skill set (no --with/--without flags). These are
 # the default-on groups from skills/manifest.json, which now include the `tdd`
 # module. Installing the tdd module does NOT activate TDD — activation stays
@@ -219,6 +255,167 @@ get_example_file() {
 }
 
 # ============================================================================
+# O1: scope-aware target resolution
+#
+# Every writer routes through these so global and project scopes share one code
+# path. For SCOPE=global the locations are the per-user config dirs (identical to
+# the historical behavior, so existing installs/receipts are byte-compatible).
+# For SCOPE=project everything lands inside $TARGET_PATH (the trial repo):
+#   claude-code → <repo>/.claude/{skills,agents,hooks}, <repo>/CLAUDE.md,
+#                 <repo>/.claude/settings.json
+#   pi          → <repo>/.pi/{skills,agents}, <repo>/AGENTS.md
+#   other       → <repo>/.claude/skills, <repo>/CLAUDE.md (best-effort parity)
+#
+# The install receipt lives in RECEIPT_DIR: the skills dir for global (unchanged),
+# or the repo root for project (O1), so uninstall/update/doctor find one receipt.
+# ============================================================================
+
+# Skills directory for the current scope.
+scoped_skills_path() {
+    local agent="$1"
+    if [ "$SCOPE" = "project" ]; then
+        case "$agent" in
+            pi)  echo "$TARGET_PATH/.pi/skills" ;;
+            *)   echo "$TARGET_PATH/.claude/skills" ;;
+        esac
+    else
+        get_skills_path "$agent"
+    fi
+}
+
+# Native-agents directory for the current scope (claude-code + pi only).
+scoped_agents_path() {
+    local agent="$1"
+    if [ "$SCOPE" = "project" ]; then
+        case "$agent" in
+            pi)  echo "$TARGET_PATH/.pi/agents" ;;
+            *)   echo "$TARGET_PATH/.claude/agents" ;;
+        esac
+    else
+        case "$agent" in
+            pi)  echo "$(home_dir)/.pi/agent/agents" ;;
+            *)   echo "$(dirname "$(get_skills_path "$agent")")/agents" ;;
+        esac
+    fi
+}
+
+# Orchestrator prompt file for the current scope.
+scoped_prompt_path() {
+    local agent="$1"
+    if [ "$SCOPE" = "project" ]; then
+        case "$agent" in
+            pi)        echo "$TARGET_PATH/AGENTS.md" ;;
+            opencode)  echo "$TARGET_PATH/AGENTS.md" ;;
+            *)         echo "$TARGET_PATH/CLAUDE.md" ;;
+        esac
+    else
+        get_prompt_path "$agent"
+    fi
+}
+
+# Claude Code hooks dir + settings.json for the current scope.
+scoped_hooks_dir() {
+    if [ "$SCOPE" = "project" ]; then
+        echo "$TARGET_PATH/.claude/hooks/kurama"
+    else
+        echo "$(home_dir)/.claude/hooks/kurama"
+    fi
+}
+
+scoped_settings_file() {
+    if [ "$SCOPE" = "project" ]; then
+        echo "$TARGET_PATH/.claude/settings.json"
+    else
+        echo "$(home_dir)/.claude/settings.json"
+    fi
+}
+
+# The directory the install receipt lives in (paths are recorded relative to it).
+scoped_receipt_dir() {
+    local agent="$1"
+    if [ "$SCOPE" = "project" ]; then
+        echo "$TARGET_PATH"
+    else
+        scoped_skills_path "$agent"
+    fi
+}
+
+# Compute a path RELATIVE to RECEIPT_DIR. Both inputs are absolute. Global uses
+# the historical skill-relative form (skills nested in RECEIPT_DIR yield bare
+# names, siblings yield ../…); project yields repo-relative paths.
+receipt_rel() {
+    local abs="$1"
+    case "$abs" in
+        "$RECEIPT_DIR"/*) printf '%s' "${abs#"$RECEIPT_DIR"/}" ;;
+        *)
+            # Sibling of RECEIPT_DIR (global agents/hooks/settings live one level
+            # up from the skills dir): emit a ../-anchored path.
+            local parent base
+            parent="$(dirname "$RECEIPT_DIR")"
+            case "$abs" in
+                "$parent"/*) printf '../%s' "${abs#"$parent"/}" ;;
+                *) base="$abs"; printf '%s' "$base" ;;
+            esac
+            ;;
+    esac
+}
+
+# ============================================================================
+# O1: --path validation for project scope
+# ============================================================================
+
+# Resolve a path to an absolute, symlink-free form (portable; no realpath dep).
+abspath() {
+    local p="$1"
+    if [ -d "$p" ]; then
+        (cd "$p" 2>/dev/null && pwd)
+    else
+        local d b
+        d="$(dirname "$p")"; b="$(basename "$p")"
+        printf '%s/%s' "$(cd "$d" 2>/dev/null && pwd)" "$b"
+    fi
+}
+
+# Validate TARGET_PATH for project scope: must exist, be a git repo, and never be
+# the Kurama clone itself. In non-interactive mode a non-repo aborts; interactive
+# mode asks once before proceeding. Sets TARGET_PATH to its absolute form.
+validate_project_target() {
+    [ "$SCOPE" = "project" ] || return 0
+
+    # Default to the current working directory when --path is omitted.
+    [ -n "$TARGET_PATH" ] || TARGET_PATH="$PWD"
+
+    if [ ! -d "$TARGET_PATH" ]; then
+        fail "Project target does not exist: $TARGET_PATH"
+        exit 1
+    fi
+    TARGET_PATH="$(abspath "$TARGET_PATH")"
+
+    # Never install into the Kurama repo itself — that would pollute the source.
+    local repo_abs
+    repo_abs="$(abspath "$REPO_DIR")"
+    if [ "$TARGET_PATH" = "$repo_abs" ]; then
+        fail "Refusing to install into the Kurama repo itself: $TARGET_PATH"
+        info "Point --path at the repository you want to try Kurama in."
+        exit 1
+    fi
+
+    # Must be a git repository (the trial surface for hooks + orchestrator merge).
+    if ! git -C "$TARGET_PATH" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        if $NON_INTERACTIVE; then
+            fail "Project target is not a git repository: $TARGET_PATH"
+            info "Initialize it first (git init) or pass a repo path, then re-run."
+            exit 1
+        fi
+        warn "Project target is not a git repository: $TARGET_PATH"
+        read -rp "  Install anyway? [y/N]: " ans
+        [[ "${ans:-N}" =~ ^[Yy] ]] || { info "Aborted."; exit 0; }
+    fi
+
+    ok "Project scope target: $TARGET_PATH"
+}
+
+# ============================================================================
 # Version + manifest helpers (kept in sync with install.sh so both installers
 # resolve the SAME default skill set and write the SAME install receipt)
 # ============================================================================
@@ -276,30 +473,55 @@ setup_group_is_active() {
     esac
 }
 
-# Record what we installed under a target so scripts/uninstall.sh can remove an
-# exact file list. Byte-for-byte the same format/fields as install.sh's writer.
-write_install_manifest() {
-    local target_dir="$1"
-    local tool_name="$2"
-    local files="$3"
-    local manifest_path="$target_dir/$INSTALL_MANIFEST_NAME"
+# Emit a JSON string array (one element per non-empty input line), indented under
+# a given key. Portable awk (bash 3.2 / BSD). Used by finalize_receipt.
+_json_array() {
+    printf '%s\n' "$1" | awk 'NF { list[n++] = $0 }
+        END {
+            for (i = 0; i < n; i++) {
+                sep = (i < n - 1) ? "," : ""
+                printf "    \"%s\"%s\n", list[i], sep
+            }
+        }'
+}
+
+# Flush the receipt accumulators to RECEIPT_DIR/.kurama-install-manifest.json.
+# Extends install.sh's format with additive fields — "scope", "settings"
+# (settings.json files carrying a surgically-removable kurama hooks block),
+# "pi_packages" (packages installed via `pi install`), "engram_mcp" (client
+# config files an Engram MCP server was written into) and "prompts" (orchestrator
+# prompt files carrying a removable BEGIN:kurama block) — so uninstall/update/
+# doctor can reverse and re-sync exactly what setup wrote. Older receipts that
+# lack these fields still parse (the consumers treat them as global/empty).
+finalize_receipt() {
+    [ -n "$RECEIPT_DIR" ] || return 0
+    local manifest_path="$RECEIPT_DIR/$INSTALL_MANIFEST_NAME"
     local version
     version="$(read_version)"
 
+    mkdir -p "$RECEIPT_DIR"
     make_writable "$manifest_path"
     {
         printf '{\n'
         printf '  "name": "kurama",\n'
         printf '  "version": "%s",\n' "$version"
-        printf '  "tool": "%s",\n' "$tool_name"
+        printf '  "tool": "%s",\n' "$RECEIPT_TOOL"
+        printf '  "scope": "%s",\n' "$SCOPE"
+        printf '  "engram": "%s",\n' "${ENGRAM:-no}"
         printf '  "files": [\n'
-        printf '%s\n' "$files" | awk 'NF { list[n++] = $0 }
-            END {
-                for (i = 0; i < n; i++) {
-                    sep = (i < n - 1) ? "," : ""
-                    printf "    \"%s\"%s\n", list[i], sep
-                }
-            }'
+        _json_array "$RECEIPT_FILES"
+        printf '  ],\n'
+        printf '  "settings": [\n'
+        _json_array "$RECEIPT_SETTINGS"
+        printf '  ],\n'
+        printf '  "pi_packages": [\n'
+        _json_array "$RECEIPT_PI_PACKAGES"
+        printf '  ],\n'
+        printf '  "engram_mcp": [\n'
+        _json_array "$RECEIPT_ENGRAM_MCP"
+        printf '  ],\n'
+        printf '  "prompts": [\n'
+        _json_array "$RECEIPT_PROMPTS"
         printf '  ]\n'
         printf '}\n'
     } > "$manifest_path"
@@ -310,14 +532,17 @@ write_install_manifest() {
 # ============================================================================
 
 install_skills() {
-    local target_dir="$1"
-    local agent_name="$2"
+    local agent_name="$1"
+    local target_dir
+    target_dir="$(scoped_skills_path "$agent_name")"
+
+    # Establish receipt context for this target up front so every writer can
+    # record its files relative to RECEIPT_DIR via receipt_rel().
+    RECEIPT_TOOL="$agent_name"
+    RECEIPT_DIR="$(scoped_receipt_dir "$agent_name")"
 
     info "Installing skills → $target_dir"
     mkdir -p "$target_dir"
-
-    # Newline-delimited list of target-relative paths we write (for the manifest).
-    local installed_files=""
 
     # Copy _shared
     local shared_src="$SKILLS_SRC/_shared"
@@ -328,15 +553,15 @@ install_skills() {
         for shared_file in "$shared_src"/*.md; do
             [ -f "$shared_file" ] || continue
             cp "$shared_file" "$shared_target/"
-            installed_files="$installed_files
-_shared/$(basename "$shared_file")"
+            RECEIPT_FILES="$RECEIPT_FILES
+$(receipt_rel "$shared_target/$(basename "$shared_file")")"
         done
         ok "_shared conventions"
     fi
 
     # Copy the DEFAULT skill set resolved from skills/manifest.json (single source
     # of truth, shared with install.sh) — no hardcoded skill list. Runs in the
-    # current shell (process substitution) so $count/$installed_files persist.
+    # current shell (process substitution) so $count/RECEIPT_FILES persist.
     local count=0
     local skill_name group skill_dir
     while IFS=' ' read -r skill_name group; do
@@ -351,8 +576,8 @@ _shared/$(basename "$shared_file")"
             make_writable "$target_dir/$skill_name/SKILL.md"
         fi
         cp "$skill_dir/SKILL.md" "$target_dir/$skill_name/SKILL.md"
-        installed_files="$installed_files
-$skill_name/SKILL.md"
+        RECEIPT_FILES="$RECEIPT_FILES
+$(receipt_rel "$target_dir/$skill_name/SKILL.md")"
         count=$((count + 1))
     done < <(manifest_skill_lines)
 
@@ -361,43 +586,45 @@ $skill_name/SKILL.md"
         exit 1
     fi
 
-    # N4: Claude Code native agents. Install every examples/claude-code/agents/*.md
-    # into ~/.claude/agents/ (a sibling of the skills target). Pre-existing files
-    # with the same name are backed up (make_backup) then replaced atomically, and
-    # each installed agent is recorded in the SAME per-target receipt as a path
-    # relative to the skills dir (../agents/NAME.md) so uninstall.sh removes them
-    # too. Only claude-code ships native agents; other targets are untouched.
-    if [ "$agent_name" = "claude-code" ]; then
-        local agents_src="$EXAMPLES_DIR/claude-code/agents"
-        local agents_target
-        agents_target="$(dirname "$target_dir")/agents"
-        if [ -d "$agents_src" ]; then
-            mkdir -p "$agents_target"
-            local agent_file agent_base agent_dest acount=0
-            for agent_file in "$agents_src"/*.md; do
-                [ -f "$agent_file" ] || continue
-                agent_base="$(basename "$agent_file")"
-                agent_dest="$agents_target/$agent_base"
-                if [ -f "$agent_dest" ]; then
-                    make_backup "$agent_dest"
-                    make_writable "$agent_dest"
-                fi
-                atomic_replace "$agent_dest" < "$agent_file"
-                installed_files="$installed_files
-../agents/$agent_base"
-                acount=$((acount + 1))
-            done
-            ok "$acount Claude Code agents installed → $agents_target"
-        else
-            warn "Claude Code agents source not found: $agents_src (skipped)"
-        fi
-    fi
-
-    # Write the same install receipt install.sh writes, so uninstall.sh works for
-    # setup.sh installs too.
-    write_install_manifest "$target_dir" "$agent_name" "$installed_files"
+    # Native subagents. claude-code ships Claude-format agents; pi ships the
+    # Pi-format agents (O4 wiring — the brother authored examples/pi/agents/*.md).
+    # Every other target has no native agents. Pre-existing files are backed up
+    # then replaced atomically, and each is recorded in the receipt so
+    # uninstall.sh removes them too.
+    case "$agent_name" in
+        claude-code) install_native_agents "$EXAMPLES_DIR/claude-code/agents" "Claude Code" ;;
+        pi)          install_native_agents "$EXAMPLES_DIR/pi/agents" "Pi" ;;
+    esac
 
     ok "$count skills installed"
+}
+
+# Install every *.md agent from $1 into the scoped agents dir, backing up any
+# pre-existing same-named file and recording each in RECEIPT_FILES.
+install_native_agents() {
+    local agents_src="$1" label="$2"
+    local agents_target
+    agents_target="$(scoped_agents_path "$RECEIPT_TOOL")"
+    if [ ! -d "$agents_src" ]; then
+        warn "$label agents source not found: $agents_src (skipped)"
+        return 0
+    fi
+    mkdir -p "$agents_target"
+    local agent_file agent_base agent_dest acount=0
+    for agent_file in "$agents_src"/*.md; do
+        [ -f "$agent_file" ] || continue
+        agent_base="$(basename "$agent_file")"
+        agent_dest="$agents_target/$agent_base"
+        if [ -f "$agent_dest" ]; then
+            make_backup "$agent_dest"
+            make_writable "$agent_dest"
+        fi
+        atomic_replace "$agent_dest" < "$agent_file"
+        RECEIPT_FILES="$RECEIPT_FILES
+$(receipt_rel "$agent_dest")"
+        acount=$((acount + 1))
+    done
+    ok "$acount $label agents installed → $agents_target"
 }
 
 # ============================================================================
@@ -451,6 +678,100 @@ validate_markers() {
 }
 
 # ============================================================================
+# O2: Claude Code hooks (ALWAYS installed for claude-code, both scopes)
+#
+# Copies the two deterministic-gate scripts to <target>/hooks/kurama/ and merges
+# a PreToolUse block into the matching settings.json. Every hook command string
+# embeds "hooks/kurama/" so uninstall.sh can filter exactly our entries back out.
+# The JSON merge prefers jq (careful, idempotent, atomic, backed up); without jq
+# it prints guided manual steps and NEVER sed-edits JSON. All writes recorded in
+# the receipt (scripts under files[], the settings.json under settings[]).
+# ============================================================================
+
+install_hooks() {
+    local hooks_dir settings_file
+    hooks_dir="$(scoped_hooks_dir)"
+    settings_file="$(scoped_settings_file)"
+
+    if [ ! -d "$HOOKS_SRC" ]; then
+        warn "Hooks source not found: $HOOKS_SRC (skipped)"
+        return 0
+    fi
+
+    header "Installing Claude Code hooks"
+    mkdir -p "$hooks_dir"
+
+    # 1. Copy the hook scripts (executable), recording each in the receipt.
+    local script dest
+    for script in $HOOK_SCRIPTS; do
+        [ -f "$HOOKS_SRC/$script" ] || { warn "Missing hook script: $script"; continue; }
+        dest="$hooks_dir/$script"
+        if [ -f "$dest" ]; then make_writable "$dest"; fi
+        atomic_replace "$dest" < "$HOOKS_SRC/$script"
+        chmod +x "$dest" 2>/dev/null || true
+        RECEIPT_FILES="$RECEIPT_FILES
+$(receipt_rel "$dest")"
+    done
+    ok "hook scripts → $hooks_dir"
+
+    # 2. Build the two command strings. Project scope uses the Claude-expanded
+    #    $CLAUDE_PROJECT_DIR anchor; global scope uses the absolute path. Both
+    #    contain "hooks/kurama/" for surgical removal.
+    local guard_cmd gate_cmd
+    if [ "$SCOPE" = "project" ]; then
+        guard_cmd='$CLAUDE_PROJECT_DIR/.claude/hooks/kurama/orchestrator-write-guard.sh'
+        gate_cmd='$CLAUDE_PROJECT_DIR/.claude/hooks/kurama/archive-gate.sh'
+    else
+        guard_cmd="$hooks_dir/orchestrator-write-guard.sh"
+        gate_cmd="$hooks_dir/archive-gate.sh"
+    fi
+
+    # 3. Merge the PreToolUse block into settings.json (idempotent).
+    merge_hooks_settings "$settings_file" "$guard_cmd" "$gate_cmd"
+    RECEIPT_SETTINGS="$RECEIPT_SETTINGS
+$(receipt_rel "$settings_file")"
+}
+
+# Careful JSON merge of the Kurama PreToolUse hooks into a settings.json. Removes
+# any prior kurama entries (matched by the "hooks/kurama/" substring) before
+# re-adding, so it is fully idempotent. Backs up + writes atomically. Degrades to
+# printed manual instructions when jq is unavailable — never sed on JSON.
+merge_hooks_settings() {
+    local settings_file="$1" guard_cmd="$2" gate_cmd="$3"
+    mkdir -p "$(dirname "$settings_file")"
+
+    if ! command -v jq >/dev/null 2>&1; then
+        warn "jq not found — cannot auto-merge the hooks block into settings.json"
+        info "Add these PreToolUse hooks manually to: $settings_file"
+        info "  Edit|Write|MultiEdit → command: $guard_cmd"
+        info "  Task|Skill           → command: $gate_cmd"
+        return 0
+    fi
+
+    local merged
+    merged=$(
+        { [ -f "$settings_file" ] && cat "$settings_file" || printf '{}'; } | \
+        jq --arg guard "$guard_cmd" --arg gate "$gate_cmd" '
+            .hooks = (.hooks // {}) |
+            .hooks.PreToolUse = ((.hooks.PreToolUse // [])
+                | map(select(
+                    (((.hooks // []) | map(.command // "") | join(" "))
+                        | contains("hooks/kurama/")) | not))) |
+            .hooks.PreToolUse += [
+                {matcher: "Edit|Write|MultiEdit",
+                 hooks: [{type: "command", command: $guard}]},
+                {matcher: "Task|Skill",
+                 hooks: [{type: "command", command: $gate}]}
+            ]
+        '
+    ) || { fail "Failed to merge hooks into $settings_file (left unchanged)"; return 1; }
+
+    if [ -f "$settings_file" ]; then make_backup "$settings_file"; fi
+    printf '%s\n' "$merged" | atomic_replace "$settings_file"
+    ok "hooks merged into $settings_file"
+}
+
+# ============================================================================
 # Setup Orchestrator Prompt (idempotent with markers)
 # ============================================================================
 
@@ -475,6 +796,13 @@ setup_orchestrator() {
         info "Wrote $prompt_path (verbatim .mdc copy)"
         return 0
     fi
+
+    # Record this prompt so uninstall.sh can surgically strip Kurama's orchestrator
+    # block (BEGIN:kurama … END:kurama) on removal, preserving the user's own
+    # content in a shared prompt file. (Cursor is exempt above — its dedicated
+    # .mdc is a verbatim copy with no markers.)
+    RECEIPT_PROMPTS="$RECEIPT_PROMPTS
+$(receipt_rel "$prompt_path")"
 
     local content
     # Strip preamble (human-readable header) — only inject from "## Kurama" onward
@@ -805,6 +1133,18 @@ setup_pi_packages() {
     pi_run_step "pi-btw@$PI_PKG_BTW_VERSION" \
         pi install "npm:pi-btw@$PI_PKG_BTW_VERSION"
 
+    # Record the packages Kurama installs so uninstall.sh can offer to revert
+    # exactly these (O3). The npm-exec init step is NOT a package and is omitted;
+    # gentle-pi is never here by construction.
+    RECEIPT_PI_PACKAGES="$RECEIPT_PI_PACKAGES
+npm:gentle-engram@$PI_PKG_GENTLE_ENGRAM_VERSION
+npm:pi-mcp-adapter@$PI_PKG_MCP_ADAPTER_VERSION
+npm:pi-subagents-j0k3r@$PI_PKG_SUBAGENTS_VERSION
+npm:@juicesharp/rpiv-ask-user-question@$PI_PKG_ASK_USER_VERSION
+npm:pi-web-access@$PI_PKG_WEB_ACCESS_VERSION
+npm:@juicesharp/rpiv-todo@$PI_PKG_TODO_VERSION
+npm:pi-btw@$PI_PKG_BTW_VERSION"
+
     echo ""
     if [ -n "$PI_INSTALL_OK" ]; then
         info "Pi packages installed:"
@@ -817,31 +1157,278 @@ setup_pi_packages() {
 }
 
 # ============================================================================
+# O5: Engram optional persistence engine (asked once; MCP registered per client)
+#
+# Ask ONCE whether to use Engram. Honors --with-engram/--without-engram and
+# defaults to NO when non-interactive so external installers never surprise the
+# user. When enabled we ensure the binary (Homebrew on macOS with explicit
+# consent, else a printed guide — NEVER a silent network call) and register the
+# Engram MCP server into the client being configured, replicating the exact
+# per-client server shapes gentle-ai writes. All JSON edits go through jq (backup
+# + atomic) and degrade to guided manual steps when jq is missing — never sed on
+# JSON. Codex is TOML, upserted with a careful block replace. Every file written
+# is recorded in the receipt (engram_mcp[]).
+# ============================================================================
+
+ask_engram() {
+    case "$ENGRAM" in
+        yes|no) return 0 ;;
+    esac
+
+    if $NON_INTERACTIVE; then
+        ENGRAM="no"
+        return 0
+    fi
+
+    echo ""
+    # Tolerate EOF (piped/non-tty stdin) under `set -e`: default to NO.
+    read -rp "  Use Engram as the persistence engine? [y/N]: " engram_answer || engram_answer="N"
+    if [[ "${engram_answer:-N}" =~ ^[Yy] ]]; then
+        ENGRAM="yes"
+    else
+        ENGRAM="no"
+    fi
+}
+
+# Resolve the most stable engram command string, mirroring gentle-ai's
+# resolveEngramCommand: prefer an absolute PATH hit, but collapse a versioned
+# Homebrew Cellar path back to bare "engram" (it changes on every upgrade).
+# Falls back to "engram" when the binary is not yet installed.
+engram_command() {
+    local p
+    if p="$(command -v engram 2>/dev/null)" && [ -n "$p" ]; then
+        case "$p" in
+            */Cellar/engram/*) echo "engram" ;;
+            *)                 echo "$p" ;;
+        esac
+    else
+        echo "engram"
+    fi
+}
+
+# Ensure the engram binary is available. Runs at most once per setup invocation.
+# macOS + Homebrew: offer to install with explicit consent (never in
+# non-interactive mode — just guidance). Everything else: print the releases
+# guide and continue (registration is still written; it activates once engram is
+# on PATH). This is the ONLY place setup may run a network command, and only
+# after the user says yes.
+ensure_engram_binary() {
+    $ENGRAM_BINARY_CHECKED && return 0
+    ENGRAM_BINARY_CHECKED=true
+
+    if command -v engram >/dev/null 2>&1; then
+        ok "engram found: $(command -v engram)"
+        return 0
+    fi
+
+    warn "engram not found in PATH"
+    if [ "$OS" = "macos" ] && command -v brew >/dev/null 2>&1; then
+        if $NON_INTERACTIVE; then
+            info "Install it with: brew tap $ENGRAM_TAP && brew install engram"
+            return 0
+        fi
+        read -rp "  Install engram now via Homebrew? [y/N]: " brew_answer || brew_answer="N"
+        if [[ "${brew_answer:-N}" =~ ^[Yy] ]]; then
+            info "Running: brew tap $ENGRAM_TAP && brew install engram"
+            if brew tap "$ENGRAM_TAP" && brew install engram; then
+                ok "engram installed via Homebrew"
+            else
+                warn "brew install engram failed — continuing without the binary"
+                info "Install manually from: $ENGRAM_RELEASES_URL"
+            fi
+        else
+            info "Skipped. Install later from: $ENGRAM_RELEASES_URL"
+        fi
+    else
+        info "Install engram from: $ENGRAM_RELEASES_URL"
+        info "The MCP registration is still written; it activates once engram is on PATH."
+    fi
+}
+
+# Merge an Engram MCP overlay into a JSON config using a jq program. jq-only
+# (never sed on JSON); degrades to printed guidance when jq is absent. Backs up +
+# writes atomically, and records the file in the receipt (engram_mcp[]).
+engram_merge_json() {
+    local file="$1" jq_prog="$2" cmd="$3"
+    mkdir -p "$(dirname "$file")"
+
+    if ! command -v jq >/dev/null 2>&1; then
+        warn "jq not found — cannot auto-register the Engram MCP server"
+        info "Add the Engram MCP server manually to: $file"
+        info "  command: $cmd   args: [\"mcp\", \"--tools=agent\"]"
+        return 0
+    fi
+
+    local merged
+    merged=$(
+        { [ -f "$file" ] && cat "$file" || printf '{}'; } | \
+        jq --arg cmd "$cmd" "$jq_prog"
+    ) || { fail "Failed to register Engram MCP in $file (left unchanged)"; return 1; }
+
+    [ -f "$file" ] && make_backup "$file"
+    printf '%s\n' "$merged" | atomic_replace "$file"
+    ok "Engram MCP registered → $file"
+    RECEIPT_ENGRAM_MCP="$RECEIPT_ENGRAM_MCP
+$(receipt_rel "$file")"
+}
+
+# Codex uses TOML, not JSON. Upsert the [mcp_servers.engram] block: strip any
+# existing block (up to the next section header or EOF) then append a fresh one.
+# Backup + atomic, recorded in the receipt. jq never touches this file.
+register_engram_codex() {
+    local file="$1" cmd="$2"
+    mkdir -p "$(dirname "$file")"
+
+    local existing="" stripped
+    if [ -f "$file" ]; then
+        make_backup "$file"
+        existing="$(cat "$file")"
+    fi
+    stripped="$(printf '%s\n' "$existing" | awk '
+        /^\[mcp_servers\.engram\]/ { skip=1; next }
+        skip && /^\[/ { skip=0 }
+        !skip { print }
+    ')"
+
+    {
+        # Preserve prior content, drop trailing blank lines, then append the block.
+        printf '%s\n' "$stripped" | awk 'NF{last=NR} {lines[NR]=$0} END{for(i=1;i<=last;i++) print lines[i]}'
+        [ -n "$stripped" ] && printf '\n'
+        printf '[mcp_servers.engram]\n'
+        printf 'command = "%s"\n' "$cmd"
+        printf 'args = ["mcp", "--tools=agent"]\n'
+    } | atomic_replace "$file"
+    ok "Engram MCP registered → $file (codex TOML)"
+    RECEIPT_ENGRAM_MCP="$RECEIPT_ENGRAM_MCP
+$(receipt_rel "$file")"
+}
+
+# Register the Engram MCP server for one client, replicating gentle-ai's exact
+# per-client shapes (inject.go). Pi needs nothing extra — the Pi package stack
+# (gentle-engram) already provides Engram there.
+register_engram_mcp() {
+    local agent="$1" cmd file home
+    cmd="$(engram_command)"
+    home="$(home_dir)"
+
+    case "$agent" in
+        pi)
+            info "Engram on Pi is provided by the Pi package stack (gentle-engram) — no extra MCP registration needed."
+            ;;
+        claude-code)
+            if [ "$SCOPE" = "project" ]; then file="$TARGET_PATH/.mcp.json"; else file="$home/.claude.json"; fi
+            engram_merge_json "$file" \
+                '.mcpServers = (.mcpServers // {}) | .mcpServers.engram = {command: $cmd, args: ["mcp", "--tools=agent"]}' \
+                "$cmd"
+            ;;
+        opencode)
+            if [ "$SCOPE" = "project" ]; then file="$TARGET_PATH/opencode.json"; else file="$home/.config/opencode/opencode.json"; fi
+            # OpenCode 1.3.3+ wants command as an array on a type:local server.
+            engram_merge_json "$file" \
+                '.mcp = (.mcp // {}) | .mcp.engram = {command: [$cmd, "mcp", "--tools=agent"], type: "local"}' \
+                "$cmd"
+            ;;
+        cursor)
+            if [ "$SCOPE" = "project" ]; then file="$TARGET_PATH/.cursor/mcp.json"; else file="$home/.cursor/mcp.json"; fi
+            engram_merge_json "$file" \
+                '.mcpServers = (.mcpServers // {}) | .mcpServers.engram = {command: $cmd, args: ["mcp", "--tools=agent"]}' \
+                "$cmd"
+            ;;
+        gemini-cli)
+            if [ "$SCOPE" = "project" ]; then file="$TARGET_PATH/.gemini/settings.json"; else file="$home/.gemini/settings.json"; fi
+            engram_merge_json "$file" \
+                '.mcpServers = (.mcpServers // {}) | .mcpServers.engram = {command: $cmd, args: ["mcp", "--tools=agent"]}' \
+                "$cmd"
+            ;;
+        vscode)
+            if [ "$SCOPE" = "project" ]; then
+                file="$TARGET_PATH/.vscode/mcp.json"
+            else
+                case "$OS" in
+                    macos)   file="$home/Library/Application Support/Code/User/mcp.json" ;;
+                    windows) file="${APPDATA:-$home/AppData/Roaming}/Code/User/mcp.json" ;;
+                    *)       file="$home/.config/Code/User/mcp.json" ;;
+                esac
+            fi
+            # VS Code uses a fixed "servers" key rather than "mcpServers".
+            engram_merge_json "$file" \
+                '.servers = (.servers // {}) | .servers.engram = {command: $cmd, args: ["mcp", "--tools=agent"]}' \
+                "$cmd"
+            ;;
+        codex)
+            if [ "$SCOPE" = "project" ]; then
+                info "Codex uses a single global MCP config; skipping Engram registration for project scope."
+                info "Run: ./setup.sh --agent codex --with-engram   (global) to register it."
+                return 0
+            fi
+            register_engram_codex "$home/.codex/config.toml" "$cmd"
+            ;;
+    esac
+}
+
+# O5 entry point per agent: ask once, ensure the binary once, register the MCP.
+setup_engram() {
+    local agent="$1"
+    ask_engram
+    [ "$ENGRAM" = "yes" ] || return 0
+
+    header "Engram persistence engine"
+    ensure_engram_binary
+    register_engram_mcp "$agent"
+}
+
+# ============================================================================
 # Full Setup for One Agent
 # ============================================================================
 
 setup_agent() {
     local agent="$1"
-    header "Setting up $agent"
+    header "Setting up $agent (scope: $SCOPE)"
 
-    local skills_path
-    skills_path="$(get_skills_path "$agent")"
-    install_skills "$skills_path" "$agent"
+    # Reset per-agent receipt accumulators (a single setup run may configure
+    # several agents; each gets its own receipt).
+    RECEIPT_FILES=""
+    RECEIPT_SETTINGS=""
+    RECEIPT_PI_PACKAGES=""
+    RECEIPT_ENGRAM_MCP=""
+    RECEIPT_PROMPTS=""
+
+    install_skills "$agent"
 
     local prompt_path example_file
-    prompt_path="$(get_prompt_path "$agent")"
+    prompt_path="$(scoped_prompt_path "$agent")"
     example_file="$(get_example_file "$agent")"
 
     if [[ "$agent" == "opencode" ]]; then
-        setup_opencode
+        # OpenCode's dedicated flow is global-only; project scope still gets its
+        # skills + receipt above, and the orchestrator merge below.
+        if [ "$SCOPE" = "project" ]; then
+            setup_orchestrator "$prompt_path" "$EXAMPLES_DIR/pi/AGENTS.md" "$agent"
+        else
+            setup_opencode
+        fi
     else
         setup_orchestrator "$prompt_path" "$example_file" "$agent"
+    fi
+
+    # O2: Claude Code hooks are ALWAYS installed for claude-code (both scopes).
+    if [[ "$agent" == "claude-code" ]]; then
+        install_hooks
     fi
 
     # N5: offer the Pi package stack only for the Pi target.
     if [[ "$agent" == "pi" ]]; then
         setup_pi_packages
     fi
+
+    # O5: Engram optional persistence engine — asked once, then the MCP server is
+    # registered into this client (unless declined, in which case markdown
+    # persistence stays the default and is noted in the summary).
+    setup_engram "$agent"
+
+    # Flush the single per-agent receipt (skills + agents + hooks + settings +
+    # pi packages + engram MCP) now that every step has recorded its writes.
+    finalize_receipt
 }
 
 # ============================================================================
@@ -858,19 +1445,34 @@ show_summary() {
     if [ "${#INSTALLED_AGENTS[@]}" -gt 0 ]; then
         for agent in "${INSTALLED_AGENTS[@]}"; do
             local skills_path prompt_path
-            skills_path="$(get_skills_path "$agent")"
-            prompt_path="$(get_prompt_path "$agent")"
-            echo -e "  ${GREEN}✓${NC} ${BOLD}$agent${NC}"
+            skills_path="$(scoped_skills_path "$agent")"
+            prompt_path="$(scoped_prompt_path "$agent")"
+            echo -e "  ${GREEN}✓${NC} ${BOLD}$agent${NC} (${SCOPE})"
             echo -e "    Skills: $skills_path"
             echo -e "    Prompt: $prompt_path"
+            if [ "$agent" = "claude-code" ]; then
+                echo -e "    Hooks:  $(scoped_hooks_dir)"
+            fi
+            echo -e "    Receipt: $(scoped_receipt_dir "$agent")/$INSTALL_MANIFEST_NAME"
         done
     fi
 
     echo ""
     echo -e "${GREEN}${BOLD}Done!${NC} Start using SDD: open any project and type ${CYAN}/sdd-init${NC}"
     echo ""
-    echo -e "${YELLOW}Recommended:${NC} Install ${BOLD}Engram${NC} for cross-session persistence"
-    echo -e "  ${CYAN}https://github.com/gentleman-programming/engram${NC}"
+    # O5: persistence-engine status. When Engram is enabled we confirm it (and
+    # nudge to install the binary if it is not yet on PATH); when declined we tell
+    # the user the harness runs on its built-in markdown persistence.
+    if [ "${ENGRAM:-no}" = "yes" ]; then
+        echo -e "${GREEN}Engram:${NC} enabled as the persistence engine (MCP registered per client)."
+        if ! command -v engram >/dev/null 2>&1; then
+            echo -e "  Install the binary to activate it: ${CYAN}$ENGRAM_RELEASES_URL${NC}"
+        fi
+    else
+        echo -e "${YELLOW}Persistence:${NC} using the built-in ${BOLD}markdown${NC} fallback (openspec/.kurama)."
+        echo -e "  Enable cross-session memory anytime with ${CYAN}--with-engram${NC} (installs Engram)."
+        echo -e "  ${CYAN}$ENGRAM_RELEASES_URL${NC}"
+    fi
     echo ""
 }
 
@@ -937,14 +1539,24 @@ ALL=false
 NON_INTERACTIVE=false
 OPENCODE_MODE=""  # "", "single", or "multi"
 PI_PACKAGES=""    # "", "yes", or "no" — controls the N5 Pi package stack
+ENGRAM=""         # "", "yes", or "no" — O5 Engram persistence engine
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --agent)          AGENT="$2"; shift 2 ;;
         --all)            ALL=true; shift ;;
         --non-interactive) NON_INTERACTIVE=true; ALL=true; shift ;;
+        --scope)
+            case "$2" in
+                global|project) SCOPE="$2"; shift 2 ;;
+                *) echo "Invalid scope: $2 (use 'global' or 'project')"; exit 1 ;;
+            esac
+            ;;
+        --path)           TARGET_PATH="$2"; shift 2 ;;
         --with-pi-packages)    PI_PACKAGES="yes"; shift ;;
         --without-pi-packages) PI_PACKAGES="no"; shift ;;
+        --with-engram)         ENGRAM="yes"; shift ;;
+        --without-engram)      ENGRAM="no"; shift ;;
         --opencode-mode)
             if [[ "$2" == "single" || "$2" == "multi" ]]; then
                 OPENCODE_MODE="$2"; shift 2
@@ -958,18 +1570,35 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --all                  Auto-detect and install for all found agents"
             echo "  --agent NAME           Install for a specific agent"
+            echo "  --scope SCOPE          Install scope: 'global' (default) or 'project'"
+            echo "  --path DIR             Target repo for --scope project (default: cwd; must be a git repo)"
             echo "  --opencode-mode M      OpenCode agent mode: 'single' or 'multi' (per-phase models)"
             echo "  --with-pi-packages     Install the Pi package stack (--agent pi, non-interactive)"
             echo "  --without-pi-packages  Skip the Pi package stack (--agent pi, non-interactive)"
+            echo "  --with-engram          Use Engram as the persistence engine (register its MCP)"
+            echo "  --without-engram       Keep the built-in markdown persistence (default)"
             echo "  --non-interactive      No prompts (for external installers)"
             echo "  -h, --help             Show this help"
             echo ""
             echo "Agents: claude-code, opencode, gemini-cli, cursor, vscode, codex, pi"
+            echo ""
+            echo "Scope:"
+            echo "  global   Install to the per-user agent config dirs (~/.claude, ~/.pi, …)."
+            echo "  project  Install everything into a single git repo (--path) to trial Kurama:"
+            echo "           skills, agents, hooks, and the orchestrator merge live under the repo."
             exit 0
             ;;
         *)  echo "Unknown option: $1"; exit 1 ;;
     esac
 done
+
+# --path only makes sense with project scope.
+if [ -n "$TARGET_PATH" ] && [ "$SCOPE" != "project" ]; then
+    echo "--path requires --scope project"; exit 1
+fi
+
+# O1: validate the project target (exists, git repo, not the Kurama repo) once.
+validate_project_target
 
 # Validate source
 for skill_dir in "$SKILLS_SRC"/sdd-*/; do

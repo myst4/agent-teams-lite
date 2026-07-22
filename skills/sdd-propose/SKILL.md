@@ -58,6 +58,8 @@ openspec/changes/{change-name}/
 
 ### Step 4: Write proposal.md
 
+If the skill registry exposes a brainstorming-type skill, you MAY run it for the product-question round — optional, never required.
+
 ```markdown
 # Proposal: {Change Title}
 

@@ -95,6 +95,7 @@ All checks must pass before a PR can be merged.
 - Keep PR scope focused — one logical change per PR
 - Use [conventional commits](https://www.conventionalcommits.org/) format
 - Run `shellcheck` on any modified shell scripts before pushing
+- For changes to the installer scripts, SDD skills, orchestrator prompt, or Claude Code hooks, run the manual [smoke test](docs/smoke-test.md) end-to-end before opening the PR
 - Update docs in the same PR when behavior changes
 - Do not include `Co-Authored-By` trailers in commits
 

@@ -49,6 +49,8 @@ Parse what the user wants to explore:
 - Is this a new feature? A bug fix? A refactor?
 - What domain does it touch?
 
+If the skill registry exposes a brainstorming-type skill, you MAY run it for the product-question round — optional, never required.
+
 ### Step 3: Investigate the Codebase
 
 Read relevant code to understand:

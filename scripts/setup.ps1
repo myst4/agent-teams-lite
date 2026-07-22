@@ -31,8 +31,17 @@ param(
     [string]$Agent,
     [ValidateSet('single', 'multi')]
     [string]$OpenCodeMode,
+    # O1: install scope. 'global' (default) writes to the per-user config dirs;
+    # 'project' installs everything into a single git repo (-Path) to trial Kurama.
+    [ValidateSet('global', 'project')]
+    [string]$Scope = 'global',
+    [string]$Path,
     [switch]$WithPiPackages,
     [switch]$WithoutPiPackages,
+    # O5: Engram optional persistence engine. -WithEngram registers its MCP into
+    # the client being configured; -WithoutEngram keeps the markdown fallback.
+    [switch]$WithEngram,
+    [switch]$WithoutEngram,
     [switch]$All,
     [switch]$NonInteractive,
     [switch]$Help
@@ -130,6 +139,115 @@ $AgentBinaries = @{
     'pi'          = 'pi'
 }
 
+# O2: Claude Code hooks source (always installed for claude-code, both scopes).
+$HooksSrc = Join-Path $ExamplesDir 'claude-code\hooks'
+$HookScripts = @('orchestrator-write-guard.sh', 'archive-gate.sh')
+
+# O1: resolved once by Confirm-ProjectTarget when Scope=project (absolute repo root).
+$script:TargetPath = ''
+
+# Receipt accumulators — filled across Install-Skills / Install-Hooks / Pi steps,
+# flushed once by Write-Receipt at the end of Set-Agent (mirrors setup.sh).
+$script:ReceiptDir = ''
+$script:ReceiptTool = ''
+$script:ReceiptFiles = $null
+$script:ReceiptSettings = $null
+$script:ReceiptPiPackages = $null
+$script:ReceiptEngramMcp = $null   # O5: config files an Engram MCP server was written to
+
+# O5: Engram optional persistence engine state (mirrors setup.sh).
+$script:Engram = ''                # '', 'yes', or 'no'
+$script:EngramBinaryChecked = $false
+$EngramReleasesUrl = 'https://github.com/Gentleman-Programming/engram/releases'
+
+# ---- Scope-aware target resolution (mirrors setup.sh scoped_* helpers) ----
+
+function Get-ScopedSkillsPath {
+    param([string]$AgentName)
+    if ($Scope -eq 'project') {
+        if ($AgentName -eq 'pi') { return (Join-Path $script:TargetPath '.pi\skills') }
+        return (Join-Path $script:TargetPath '.claude\skills')
+    }
+    return $SkillsPaths[$AgentName]
+}
+
+function Get-ScopedAgentsPath {
+    param([string]$AgentName)
+    if ($Scope -eq 'project') {
+        if ($AgentName -eq 'pi') { return (Join-Path $script:TargetPath '.pi\agents') }
+        return (Join-Path $script:TargetPath '.claude\agents')
+    }
+    if ($AgentName -eq 'pi') { return (Join-Path $env:USERPROFILE '.pi\agent\agents') }
+    return (Join-Path (Split-Path -Parent $SkillsPaths[$AgentName]) 'agents')
+}
+
+function Get-ScopedPromptPath {
+    param([string]$AgentName)
+    if ($Scope -eq 'project') {
+        if ($AgentName -eq 'pi' -or $AgentName -eq 'opencode') { return (Join-Path $script:TargetPath 'AGENTS.md') }
+        return (Join-Path $script:TargetPath 'CLAUDE.md')
+    }
+    return $PromptPaths[$AgentName]
+}
+
+function Get-ScopedHooksDir {
+    if ($Scope -eq 'project') { return (Join-Path $script:TargetPath '.claude\hooks\kurama') }
+    return (Join-Path $env:USERPROFILE '.claude\hooks\kurama')
+}
+
+function Get-ScopedSettingsFile {
+    if ($Scope -eq 'project') { return (Join-Path $script:TargetPath '.claude\settings.json') }
+    return (Join-Path $env:USERPROFILE '.claude\settings.json')
+}
+
+function Get-ScopedReceiptDir {
+    param([string]$AgentName)
+    if ($Scope -eq 'project') { return $script:TargetPath }
+    return (Get-ScopedSkillsPath $AgentName)
+}
+
+# Compute a path relative to $script:ReceiptDir (mirrors setup.sh receipt_rel).
+function Get-ReceiptRel {
+    param([string]$AbsPath)
+    $root = $script:ReceiptDir
+    $abs = [System.IO.Path]::GetFullPath($AbsPath)
+    $rootFull = [System.IO.Path]::GetFullPath($root)
+    if ($abs.StartsWith($rootFull + [System.IO.Path]::DirectorySeparatorChar)) {
+        $rel = $abs.Substring($rootFull.Length + 1)
+    } else {
+        $parent = Split-Path -Parent $rootFull
+        if ($abs.StartsWith($parent + [System.IO.Path]::DirectorySeparatorChar)) {
+            $rel = '../' + $abs.Substring($parent.Length + 1)
+        } else {
+            $rel = $abs
+        }
+    }
+    return ($rel -replace '\\', '/')
+}
+
+# O1: validate -Path for project scope (exists, git repo, never the Kurama repo).
+function Confirm-ProjectTarget {
+    if ($Scope -ne 'project') { return }
+    if (-not $script:TargetPath) { $script:TargetPath = (Get-Location).Path }
+    if (-not (Test-Path $script:TargetPath -PathType Container)) {
+        throw "Project target does not exist: $script:TargetPath"
+    }
+    $script:TargetPath = (Resolve-Path $script:TargetPath).Path
+    $repoAbs = (Resolve-Path $RepoDir).Path
+    if ($script:TargetPath -eq $repoAbs) {
+        throw "Refusing to install into the Kurama repo itself: $script:TargetPath"
+    }
+    $isGit = $false
+    try { git -C $script:TargetPath rev-parse --is-inside-work-tree 2>$null | Out-Null; if ($LASTEXITCODE -eq 0) { $isGit = $true } } catch {}
+    if (-not $isGit) {
+        if ($NonInteractive) { throw "Project target is not a git repository: $script:TargetPath" }
+        Write-Warn "Project target is not a git repository: $script:TargetPath"
+        $ans = Read-Host '  Install anyway? [y/N]'
+        if ($ans -notmatch '^[Yy]') { throw 'Aborted.' }
+    }
+    Write-Ok "Project scope target: $script:TargetPath"
+}
+
 # ============================================================================
 # Display Helpers
 # ============================================================================
@@ -182,23 +300,25 @@ function Get-KuramaVersion {
     return 'unknown'
 }
 
-# Record what we installed under a target (skills, _shared conventions, and the
-# native Claude Code agents) so scripts/uninstall can remove an exact file list.
-# Same schema/fields as install.ps1's writer and setup.sh's write_install_manifest.
-function Write-InstallManifest {
-    param(
-        [string]$TargetDir,
-        [string]$ToolName,
-        [string[]]$Files
-    )
+# Flush the receipt accumulators to $script:ReceiptDir. Extends the base schema
+# with additive 'scope', 'settings' and 'pi_packages' fields (mirrors setup.sh's
+# finalize_receipt); older consumers ignore what they do not know.
+function Write-Receipt {
+    if (-not $script:ReceiptDir) { return }
     $obj = [ordered]@{
-        name    = 'kurama'
-        version = (Get-KuramaVersion)
-        tool    = $ToolName
-        files   = @($Files)
+        name        = 'kurama'
+        version     = (Get-KuramaVersion)
+        tool        = $script:ReceiptTool
+        scope       = $Scope
+        engram      = $(if ($script:Engram) { $script:Engram } else { 'no' })
+        files       = @($script:ReceiptFiles)
+        settings    = @($script:ReceiptSettings)
+        pi_packages = @($script:ReceiptPiPackages)
+        engram_mcp  = @($script:ReceiptEngramMcp)
     }
     $json = $obj | ConvertTo-Json -Depth 4
-    $manifestPath = Join-Path $TargetDir $InstallManifestName
+    New-Item -ItemType Directory -Path $script:ReceiptDir -Force | Out-Null
+    $manifestPath = Join-Path $script:ReceiptDir $InstallManifestName
     Set-Content -Path $manifestPath -Value $json -Encoding UTF8
 }
 
@@ -207,15 +327,18 @@ function Write-InstallManifest {
 # ============================================================================
 
 function Install-Skills {
-    param([string]$TargetDir, [string]$AgentName)
+    param([string]$AgentName)
+
+    $TargetDir = Get-ScopedSkillsPath $AgentName
+    $script:ReceiptTool = $AgentName
+    $script:ReceiptDir = Get-ScopedReceiptDir $AgentName
 
     Write-Info "Installing skills -> $TargetDir"
     New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null
 
-    # Target-relative paths we write, recorded in the install manifest so
-    # uninstall removes exactly what we installed (skills, _shared, and — for
-    # claude-code — the native agents under the sibling ../agents dir).
-    $installedFiles = New-Object System.Collections.Generic.List[string]
+    # Receipt-relative paths we write (recorded so uninstall removes exactly what
+    # we installed: skills, _shared, native agents, and — claude-code — hooks).
+    $installedFiles = $script:ReceiptFiles
 
     # Copy _shared
     $sharedSrc = Join-Path $SkillsSrc '_shared'
@@ -224,7 +347,7 @@ function Install-Skills {
         New-Item -ItemType Directory -Path $sharedTarget -Force | Out-Null
         foreach ($sharedFile in @(Get-ChildItem -Path $sharedSrc -Filter '*.md' -File)) {
             Copy-Item -Path $sharedFile.FullName -Destination $sharedTarget -Force
-            $installedFiles.Add("_shared/$($sharedFile.Name)")
+            $installedFiles.Add((Get-ReceiptRel (Join-Path $sharedTarget $sharedFile.Name)))
         }
         Write-Ok '_shared conventions'
     }
@@ -258,42 +381,121 @@ function Install-Skills {
         $targetSkillDir = Join-Path $TargetDir $skillDir.Name
         New-Item -ItemType Directory -Path $targetSkillDir -Force | Out-Null
         Copy-Item -Path $skillFile -Destination (Join-Path $targetSkillDir 'SKILL.md') -Force
-        $installedFiles.Add("$($skillDir.Name)/SKILL.md")
+        $installedFiles.Add((Get-ReceiptRel (Join-Path $targetSkillDir 'SKILL.md')))
         $count++
     }
 
     Write-Ok "$count skills installed"
 
-    # N4: Claude Code native agents. Install every examples/claude-code/agents/*.md
-    # into ~/.claude/agents/ (a sibling of the skills target). Pre-existing files
-    # with the same name are backed up (Backup-File) then replaced atomically
-    # (Write-AtomicFile), and each installed agent is recorded in the SAME
-    # per-target receipt as a path relative to the skills dir (../agents/NAME.md)
-    # so uninstall removes them too. Only claude-code ships native agents; other
-    # targets are untouched. Mirrors the setup.sh behavior.
-    if ($AgentName -eq 'claude-code') {
-        $agentsSrc = Join-Path $ExamplesDir 'claude-code\agents'
-        $agentsTarget = Join-Path (Split-Path -Parent $TargetDir) 'agents'
-        if (Test-Path $agentsSrc) {
-            New-Item -ItemType Directory -Path $agentsTarget -Force | Out-Null
-            $acount = 0
-            foreach ($agentFile in @(Get-ChildItem -Path $agentsSrc -Filter '*.md' -File)) {
-                $agentDest = Join-Path $agentsTarget $agentFile.Name
-                if (Test-Path $agentDest) { Backup-File -Path $agentDest }
-                Write-AtomicFile -Path $agentDest -Content (Get-Content -Path $agentFile.FullName -Raw) -NoNewline
-                $installedFiles.Add("../agents/$($agentFile.Name)")
-                $acount++
-            }
-            Write-Ok "$acount Claude Code agents installed -> $agentsTarget"
-        } else {
-            Write-Warn "Claude Code agents source not found: $agentsSrc (skipped)"
-        }
+    # Native subagents: claude-code ships Claude-format agents; pi ships the
+    # Pi-format agents (O4 wiring). Every other target has none. Pre-existing
+    # files are backed up then atomically replaced; each is recorded in the
+    # receipt so uninstall removes them too.
+    switch ($AgentName) {
+        'claude-code' { Install-NativeAgents (Join-Path $ExamplesDir 'claude-code\agents') 'Claude Code' $AgentName }
+        'pi'          { Install-NativeAgents (Join-Path $ExamplesDir 'pi\agents') 'Pi' $AgentName }
+    }
+}
+
+# Install every *.md agent from $AgentsSrc into the scoped agents dir, backing up
+# any pre-existing same-named file and recording each in the receipt.
+function Install-NativeAgents {
+    param([string]$AgentsSrc, [string]$Label, [string]$AgentName)
+    $agentsTarget = Get-ScopedAgentsPath $AgentName
+    if (-not (Test-Path $AgentsSrc)) {
+        Write-Warn "$Label agents source not found: $AgentsSrc (skipped)"
+        return
+    }
+    New-Item -ItemType Directory -Path $agentsTarget -Force | Out-Null
+    $acount = 0
+    foreach ($agentFile in @(Get-ChildItem -Path $AgentsSrc -Filter '*.md' -File)) {
+        $agentDest = Join-Path $agentsTarget $agentFile.Name
+        if (Test-Path $agentDest) { Backup-File -Path $agentDest }
+        Write-AtomicFile -Path $agentDest -Content (Get-Content -Path $agentFile.FullName -Raw) -NoNewline
+        $script:ReceiptFiles.Add((Get-ReceiptRel $agentDest))
+        $acount++
+    }
+    Write-Ok "$acount $Label agents installed -> $agentsTarget"
+}
+
+# ============================================================================
+# O2: Claude Code hooks (ALWAYS installed for claude-code, both scopes)
+#
+# Copies the two gate scripts to <target>/hooks/kurama/ and merges a PreToolUse
+# block into the matching settings.json using PowerShell-native JSON (idempotent,
+# backed up, atomic). Every command string contains 'hooks/kurama/' so uninstall
+# can filter our entries out surgically.
+# ============================================================================
+
+function Install-Hooks {
+    $hooksDir = Get-ScopedHooksDir
+    $settingsFile = Get-ScopedSettingsFile
+
+    if (-not (Test-Path $HooksSrc)) {
+        Write-Warn "Hooks source not found: $HooksSrc (skipped)"
+        return
     }
 
-    # Write the same install receipt install.ps1 / setup.sh write, so uninstall
-    # works for setup.ps1 installs too (skills + _shared + ../agents/*.md). Without
-    # this a setup.ps1 install would be un-uninstallable and orphan every file.
-    Write-InstallManifest -TargetDir $TargetDir -ToolName $AgentName -Files $installedFiles.ToArray()
+    Write-Head 'Installing Claude Code hooks'
+    New-Item -ItemType Directory -Path $hooksDir -Force | Out-Null
+
+    foreach ($script in $HookScripts) {
+        $src = Join-Path $HooksSrc $script
+        if (-not (Test-Path $src)) { Write-Warn "Missing hook script: $script"; continue }
+        $dest = Join-Path $hooksDir $script
+        Write-AtomicFile -Path $dest -Content (Get-Content -Path $src -Raw) -NoNewline
+        $script:ReceiptFiles.Add((Get-ReceiptRel $dest))
+    }
+    Write-Ok "hook scripts -> $hooksDir"
+
+    if ($Scope -eq 'project') {
+        $guardCmd = '$CLAUDE_PROJECT_DIR/.claude/hooks/kurama/orchestrator-write-guard.sh'
+        $gateCmd  = '$CLAUDE_PROJECT_DIR/.claude/hooks/kurama/archive-gate.sh'
+    } else {
+        $guardCmd = ((Join-Path $hooksDir 'orchestrator-write-guard.sh') -replace '\\', '/')
+        $gateCmd  = ((Join-Path $hooksDir 'archive-gate.sh') -replace '\\', '/')
+    }
+
+    Merge-HooksSettings -SettingsFile $settingsFile -GuardCmd $guardCmd -GateCmd $gateCmd
+    $script:ReceiptSettings.Add((Get-ReceiptRel $settingsFile))
+}
+
+# Careful, idempotent JSON merge of the Kurama PreToolUse hooks. Removes any
+# prior kurama entries (matched by the 'hooks/kurama/' substring) before adding.
+function Merge-HooksSettings {
+    param([string]$SettingsFile, [string]$GuardCmd, [string]$GateCmd)
+
+    New-Item -ItemType Directory -Path (Split-Path -Parent $SettingsFile) -Force | Out-Null
+
+    if (Test-Path $SettingsFile) {
+        try { $settings = Get-Content -Path $SettingsFile -Raw | ConvertFrom-Json } catch { $settings = [PSCustomObject]@{} }
+        Backup-File $SettingsFile
+    } else {
+        $settings = [PSCustomObject]@{}
+    }
+
+    if (-not $settings.PSObject.Properties['hooks']) {
+        $settings | Add-Member -NotePropertyName 'hooks' -NotePropertyValue ([PSCustomObject]@{}) -Force
+    }
+    if (-not $settings.hooks.PSObject.Properties['PreToolUse']) {
+        $settings.hooks | Add-Member -NotePropertyName 'PreToolUse' -NotePropertyValue @() -Force
+    }
+
+    # Drop any existing kurama entries (idempotent re-run).
+    $kept = @()
+    foreach ($entry in @($settings.hooks.PreToolUse)) {
+        $cmds = @()
+        if ($entry.PSObject.Properties['hooks']) {
+            foreach ($h in @($entry.hooks)) { if ($h.PSObject.Properties['command']) { $cmds += $h.command } }
+        }
+        if (($cmds -join ' ') -notmatch 'hooks/kurama/') { $kept += $entry }
+    }
+    $kept += [PSCustomObject]@{ matcher = 'Edit|Write|MultiEdit'; hooks = @([PSCustomObject]@{ type = 'command'; command = $GuardCmd }) }
+    $kept += [PSCustomObject]@{ matcher = 'Task|Skill';           hooks = @([PSCustomObject]@{ type = 'command'; command = $GateCmd }) }
+    $settings.hooks.PreToolUse = $kept
+
+    Write-AtomicFile -Path $SettingsFile -Content ($settings | ConvertTo-Json -Depth 12)
+    Write-Ok "hooks merged into $SettingsFile"
 }
 
 # ============================================================================
@@ -659,6 +861,15 @@ function Install-PiPackages {
     Invoke-PiStep "@juicesharp/rpiv-todo@$PiPkgTodoVersion" { pi install "npm:@juicesharp/rpiv-todo@$PiPkgTodoVersion" }
     Invoke-PiStep "pi-btw@$PiPkgBtwVersion" { pi install "npm:pi-btw@$PiPkgBtwVersion" }
 
+    # Record the packages Kurama installs so uninstall can offer to revert them (O3).
+    $script:ReceiptPiPackages.Add("npm:gentle-engram@$PiPkgGentleEngramVersion")
+    $script:ReceiptPiPackages.Add("npm:pi-mcp-adapter@$PiPkgMcpAdapterVersion")
+    $script:ReceiptPiPackages.Add("npm:pi-subagents-j0k3r@$PiPkgSubagentsVersion")
+    $script:ReceiptPiPackages.Add("npm:@juicesharp/rpiv-ask-user-question@$PiPkgAskUserVersion")
+    $script:ReceiptPiPackages.Add("npm:pi-web-access@$PiPkgWebAccessVersion")
+    $script:ReceiptPiPackages.Add("npm:@juicesharp/rpiv-todo@$PiPkgTodoVersion")
+    $script:ReceiptPiPackages.Add("npm:pi-btw@$PiPkgBtwVersion")
+
     Write-Host ''
     if ($script:PiInstallOk.Count -gt 0) {
         Write-Info 'Pi packages installed:'
@@ -671,31 +882,185 @@ function Install-PiPackages {
 }
 
 # ============================================================================
+# O5: Engram optional persistence engine (asked once; MCP registered per client)
+#
+# Mirrors setup.sh: ask ONCE (or honor -WithEngram/-WithoutEngram), ensure the
+# binary (guide on Windows — Homebrew is a macOS concern), then register the
+# Engram MCP server into the client being configured using gentle-ai's exact
+# per-client shapes. JSON edits back up + write atomically; Codex is TOML upsert.
+# Every file written is recorded in the receipt (engram_mcp[]).
+# ============================================================================
+
+function Confirm-Engram {
+    if ($script:Engram -eq 'yes' -or $script:Engram -eq 'no') { return }
+    if ($NonInteractive) { $script:Engram = 'no'; return }
+    Write-Host ''
+    $ans = Read-Host '  Use Engram as the persistence engine? [y/N]'
+    if ($ans -match '^[Yy]') { $script:Engram = 'yes' } else { $script:Engram = 'no' }
+}
+
+function Resolve-EngramCommand {
+    $c = Get-Command engram -ErrorAction SilentlyContinue
+    if ($c -and $c.Source) {
+        # Collapse a versioned Homebrew Cellar path back to bare 'engram'.
+        if ($c.Source -notmatch '[/\\]Cellar[/\\]engram[/\\]') { return $c.Source }
+    }
+    return 'engram'
+}
+
+function Confirm-EngramBinary {
+    if ($script:EngramBinaryChecked) { return }
+    $script:EngramBinaryChecked = $true
+    if (Get-Command engram -ErrorAction SilentlyContinue) {
+        Write-Ok "engram found: $((Get-Command engram).Source)"
+        return
+    }
+    Write-Warn 'engram not found in PATH'
+    Write-Info "Install engram from: $EngramReleasesUrl"
+    Write-Info 'The MCP registration is still written; it activates once engram is on PATH.'
+}
+
+# Load a JSON config as a PSCustomObject (empty object when missing/invalid).
+function Get-JsonObject {
+    param([string]$File)
+    if (Test-Path $File) {
+        try { return (Get-Content -Path $File -Raw | ConvertFrom-Json) } catch { return ([PSCustomObject]@{}) }
+    }
+    return ([PSCustomObject]@{})
+}
+
+# Ensure $Obj has a container property (mcpServers / servers / mcp) holding the
+# engram server object, then persist + record. $ServerValue is the server object.
+function Set-EngramServer {
+    param([string]$File, [string]$ContainerKey, $ServerValue)
+    New-Item -ItemType Directory -Path (Split-Path -Parent $File) -Force | Out-Null
+    $obj = Get-JsonObject $File
+    if (Test-Path $File) { Backup-File $File }
+    if (-not $obj.PSObject.Properties[$ContainerKey]) {
+        $obj | Add-Member -NotePropertyName $ContainerKey -NotePropertyValue ([PSCustomObject]@{}) -Force
+    }
+    $obj.$ContainerKey | Add-Member -NotePropertyName 'engram' -NotePropertyValue $ServerValue -Force
+    Write-AtomicFile -Path $File -Content ($obj | ConvertTo-Json -Depth 12)
+    Write-Ok "Engram MCP registered -> $File"
+    $script:ReceiptEngramMcp.Add((Get-ReceiptRel $File))
+}
+
+# Codex TOML: strip any existing [mcp_servers.engram] block, append a fresh one.
+function Register-EngramCodex {
+    param([string]$File, [string]$Cmd)
+    New-Item -ItemType Directory -Path (Split-Path -Parent $File) -Force | Out-Null
+    $existing = ''
+    if (Test-Path $File) { Backup-File $File; $existing = Get-Content -Path $File -Raw }
+    $lines = $existing -split "`r?`n"
+    $out = New-Object System.Collections.Generic.List[string]
+    $skip = $false
+    foreach ($ln in $lines) {
+        if ($ln -match '^\[mcp_servers\.engram\]') { $skip = $true; continue }
+        if ($skip -and $ln -match '^\[') { $skip = $false }
+        if (-not $skip) { $out.Add($ln) }
+    }
+    while ($out.Count -gt 0 -and $out[$out.Count - 1].Trim() -eq '') { $out.RemoveAt($out.Count - 1) }
+    $block = @('[mcp_servers.engram]', "command = `"$Cmd`"", 'args = ["mcp", "--tools=agent"]')
+    if ($out.Count -gt 0) { $content = ($out -join "`n") + "`n`n" + ($block -join "`n") + "`n" }
+    else { $content = ($block -join "`n") + "`n" }
+    Write-AtomicFile -Path $File -Content $content
+    Write-Ok "Engram MCP registered -> $File (codex TOML)"
+    $script:ReceiptEngramMcp.Add((Get-ReceiptRel $File))
+}
+
+function Register-EngramMcp {
+    param([string]$AgentName)
+    $cmd = Resolve-EngramCommand
+    $homeDir = $env:USERPROFILE
+    $genericServer = [PSCustomObject]@{ command = $cmd; args = @('mcp', '--tools=agent') }
+
+    switch ($AgentName) {
+        'pi' {
+            Write-Info 'Engram on Pi is provided by the Pi package stack (gentle-engram) — no extra MCP registration needed.'
+        }
+        'claude-code' {
+            $file = if ($Scope -eq 'project') { Join-Path $script:TargetPath '.mcp.json' } else { Join-Path $homeDir '.claude.json' }
+            Set-EngramServer -File $file -ContainerKey 'mcpServers' -ServerValue $genericServer
+        }
+        'opencode' {
+            $file = if ($Scope -eq 'project') { Join-Path $script:TargetPath 'opencode.json' } else { Join-Path $homeDir '.config\opencode\opencode.json' }
+            $ocServer = [PSCustomObject]@{ command = @($cmd, 'mcp', '--tools=agent'); type = 'local' }
+            Set-EngramServer -File $file -ContainerKey 'mcp' -ServerValue $ocServer
+        }
+        'cursor' {
+            $file = if ($Scope -eq 'project') { Join-Path $script:TargetPath '.cursor\mcp.json' } else { Join-Path $homeDir '.cursor\mcp.json' }
+            Set-EngramServer -File $file -ContainerKey 'mcpServers' -ServerValue $genericServer
+        }
+        'gemini-cli' {
+            $file = if ($Scope -eq 'project') { Join-Path $script:TargetPath '.gemini\settings.json' } else { Join-Path $homeDir '.gemini\settings.json' }
+            Set-EngramServer -File $file -ContainerKey 'mcpServers' -ServerValue $genericServer
+        }
+        'vscode' {
+            $file = if ($Scope -eq 'project') { Join-Path $script:TargetPath '.vscode\mcp.json' } else { Join-Path ($env:APPDATA) 'Code\User\mcp.json' }
+            Set-EngramServer -File $file -ContainerKey 'servers' -ServerValue $genericServer
+        }
+        'codex' {
+            if ($Scope -eq 'project') {
+                Write-Info 'Codex uses a single global MCP config; skipping Engram registration for project scope.'
+                Write-Info 'Run: .\setup.ps1 -Agent codex -WithEngram   (global) to register it.'
+                return
+            }
+            Register-EngramCodex -File (Join-Path $homeDir '.codex\config.toml') -Cmd $cmd
+        }
+    }
+}
+
+function Set-Engram {
+    param([string]$AgentName)
+    Confirm-Engram
+    if ($script:Engram -ne 'yes') { return }
+    Write-Head 'Engram persistence engine'
+    Confirm-EngramBinary
+    Register-EngramMcp -AgentName $AgentName
+}
+
+# ============================================================================
 # Full Setup for One Agent
 # ============================================================================
 
 function Set-Agent {
     param([string]$AgentName)
 
-    Write-Head "Setting up $AgentName"
+    Write-Head "Setting up $AgentName (scope: $Scope)"
 
-    $skillsPath = $SkillsPaths[$AgentName]
-    Install-Skills -TargetDir $skillsPath -AgentName $AgentName
+    # Reset per-agent receipt accumulators.
+    $script:ReceiptFiles = New-Object System.Collections.Generic.List[string]
+    $script:ReceiptSettings = New-Object System.Collections.Generic.List[string]
+    $script:ReceiptPiPackages = New-Object System.Collections.Generic.List[string]
+    $script:ReceiptEngramMcp = New-Object System.Collections.Generic.List[string]
 
-    if ($AgentName -eq 'opencode') {
+    Install-Skills -AgentName $AgentName
+
+    if ($AgentName -eq 'opencode' -and $Scope -ne 'project') {
         Set-OpenCode
     } else {
-        $promptPath = $PromptPaths[$AgentName]
-        $exampleFile = $ExampleFiles[$AgentName]
+        $promptPath = Get-ScopedPromptPath $AgentName
+        $exampleFile = if ($AgentName -eq 'opencode') { Join-Path $ExamplesDir 'pi\AGENTS.md' } else { $ExampleFiles[$AgentName] }
         if ($exampleFile) {
             Set-Orchestrator -PromptPath $promptPath -ExampleFile $exampleFile -AgentName $AgentName
         }
+    }
+
+    # O2: Claude Code hooks are ALWAYS installed for claude-code (both scopes).
+    if ($AgentName -eq 'claude-code') {
+        Install-Hooks
     }
 
     # N5: offer the Pi package stack only for the Pi target.
     if ($AgentName -eq 'pi') {
         Install-PiPackages
     }
+
+    # O5: Engram optional persistence engine — asked once, then registered.
+    Set-Engram -AgentName $AgentName
+
+    # Flush the single per-agent receipt.
+    Write-Receipt
 }
 
 # ============================================================================
@@ -710,14 +1075,31 @@ try {
         Write-Host '  -All               Auto-detect and install for all found agents'
         Write-Host '  -Agent NAME        Install for a specific agent'
         Write-Host '  -OpenCodeMode M    OpenCode agent mode: single or multi (per-phase models)'
+        Write-Host '  -Scope SCOPE       Install scope: global (default) or project'
+        Write-Host '  -Path DIR          Target repo for -Scope project (default cwd; must be a git repo)'
         Write-Host '  -WithPiPackages    Install the Pi package stack (-Agent pi, non-interactive)'
         Write-Host '  -WithoutPiPackages Skip the Pi package stack (-Agent pi, non-interactive)'
+        Write-Host '  -WithEngram        Use Engram as the persistence engine (register its MCP)'
+        Write-Host '  -WithoutEngram     Keep the built-in markdown persistence (default)'
         Write-Host '  -NonInteractive    No prompts (for external installers)'
         Write-Host '  -Help              Show this help'
         Write-Host ''
         Write-Host 'Agents: claude-code, opencode, gemini-cli, cursor, vscode, codex, pi'
+        Write-Host ''
+        Write-Host 'Scope:'
+        Write-Host '  global   Install to the per-user config dirs (~/.claude, ~/.pi, ...).'
+        Write-Host '  project  Install everything into one git repo (-Path) to trial Kurama.'
         exit 0
     }
+
+    if ($Path -and $Scope -ne 'project') {
+        throw '-Path requires -Scope project'
+    }
+    if ($Path) { $script:TargetPath = $Path }
+    # O5: resolve the Engram flags up front (interactive prompt happens once later).
+    if ($WithEngram) { $script:Engram = 'yes' }
+    if ($WithoutEngram) { $script:Engram = 'no' }
+    Confirm-ProjectTarget
 
     Write-Host ''
     Write-Host ([char]0x2554 + ([string][char]0x2550 * 42) + [char]0x2557) -ForegroundColor Cyan
@@ -791,18 +1173,30 @@ try {
         foreach ($a in $installedAgents) {
             Write-Host '  ' -NoNewline
             Write-Host ([char]0x2713) -ForegroundColor Green -NoNewline
-            Write-Host " $a" -ForegroundColor White
-            Write-Host "    Skills: $($SkillsPaths[$a])"
-            Write-Host "    Prompt: $($PromptPaths[$a])"
+            Write-Host " $a ($Scope)" -ForegroundColor White
+            Write-Host "    Skills: $(Get-ScopedSkillsPath $a)"
+            Write-Host "    Prompt: $(Get-ScopedPromptPath $a)"
+            if ($a -eq 'claude-code') { Write-Host "    Hooks:  $(Get-ScopedHooksDir)" }
+            Write-Host "    Receipt: $(Join-Path (Get-ScopedReceiptDir $a) $InstallManifestName)"
         }
         Write-Host ''
         Write-Host 'Done!' -ForegroundColor Green -NoNewline
         Write-Host ' Start using SDD: open any project and type ' -NoNewline
         Write-Host '/sdd-init' -ForegroundColor Cyan
         Write-Host ''
-        Write-Host 'Recommended: ' -ForegroundColor Yellow -NoNewline
-        Write-Host 'Install Engram for cross-session persistence'
-        Write-Host '  https://github.com/gentleman-programming/engram' -ForegroundColor Cyan
+        # O5: persistence-engine status.
+        if ($script:Engram -eq 'yes') {
+            Write-Host 'Engram: ' -ForegroundColor Green -NoNewline
+            Write-Host 'enabled as the persistence engine (MCP registered per client).'
+            if (-not (Get-Command engram -ErrorAction SilentlyContinue)) {
+                Write-Host "  Install the binary to activate it: $EngramReleasesUrl" -ForegroundColor Cyan
+            }
+        } else {
+            Write-Host 'Persistence: ' -ForegroundColor Yellow -NoNewline
+            Write-Host 'using the built-in markdown fallback (openspec/.kurama).'
+            Write-Host '  Enable cross-session memory anytime with -WithEngram (installs Engram).'
+            Write-Host "  $EngramReleasesUrl" -ForegroundColor Cyan
+        }
         Write-Host ''
     } else {
         Write-Host ''

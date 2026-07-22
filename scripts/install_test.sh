@@ -11,6 +11,8 @@ REPO_DIR="$(dirname "$SCRIPT_DIR")"
 INSTALL_SCRIPT="$SCRIPT_DIR/install.sh"
 SETUP_SCRIPT="$SCRIPT_DIR/setup.sh"
 UNINSTALL_SCRIPT="$SCRIPT_DIR/uninstall.sh"
+UPDATE_SCRIPT="$SCRIPT_DIR/update.sh"
+DOCTOR_SCRIPT="$SCRIPT_DIR/doctor.sh"
 MANIFEST_FILE="$REPO_DIR/skills/manifest.json"
 
 # ============================================================================
@@ -1060,12 +1062,33 @@ test_setup_agents_backs_up_preexisting() {
     return 0
 }
 
-test_non_claude_target_has_no_agents() {
-    # Only claude-code ships native agents. A Pi install must not create an
-    # agents directory under the Pi tree.
-    bash "$SETUP_SCRIPT" --agent pi > /dev/null 2>&1
-    if [ -d "$HOME/.pi/agent/agents" ]; then
-        echo "Pi target unexpectedly grew a native agents directory"
+test_pi_installs_native_agents() {
+    # O4 wiring: Pi now ships its own native agents (Pi format, authored in
+    # examples/pi/agents/). A global Pi install lands all 17 into
+    # ~/.pi/agent/agents/ and records them in the receipt.
+    bash "$SETUP_SCRIPT" --agent pi --without-pi-packages > /dev/null 2>&1
+    local agents_dir="$HOME/.pi/agent/agents"
+    assert_dir_exists "$agents_dir" || return 1
+    local agent
+    for agent in "${EXPECTED_AGENTS[@]}"; do
+        assert_file_exists "$agents_dir/$agent.md" || return 1
+        assert_file_not_empty "$agents_dir/$agent.md" || return 1
+    done
+    local count
+    count=$(find "$agents_dir" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')
+    assert_eq "17" "$count" "setup.sh --agent pi should install exactly 17 Pi agents" || return 1
+    # Pi agents are recorded in the receipt (../agents/NAME.md relative to skills).
+    local manifest="$HOME/.pi/agent/skills/.kurama-install-manifest.json"
+    grep -q '\.\./agents/review-risk.md' "$manifest" || {
+        echo "Pi receipt missing ../agents/review-risk.md"; return 1; }
+    return 0
+}
+
+test_non_target_agents_have_no_native_agents() {
+    # Targets other than claude-code and pi ship NO native agents.
+    bash "$SETUP_SCRIPT" --agent gemini-cli > /dev/null 2>&1
+    if [ -d "$HOME/.gemini/agents" ]; then
+        echo "gemini-cli unexpectedly grew a native agents directory"
         return 1
     fi
     return 0
@@ -1467,6 +1490,474 @@ test_plugin_json_version_matches_version_file() {
 }
 
 # ============================================================================
+# Tests — Phase 10b: scope project (O1), hooks (O2), Pi agents (O4),
+# update.sh (O6), doctor.sh (O7). Fully offline: git init is local, and the
+# doctor tooling probes (gh/pi/engram) are shadowed by fast local shims so no
+# network is ever touched.
+# ============================================================================
+
+# Init a bare-bones git work tree (local, no network) at $1.
+make_git_repo() {
+    local dir="$1"
+    mkdir -p "$dir"
+    git -C "$dir" init -q >/dev/null 2>&1
+    git -C "$dir" config user.email test@example.com >/dev/null 2>&1
+    git -C "$dir" config user.name test >/dev/null 2>&1
+}
+
+# Local shims for gh/pi/engram so doctor.sh never hits the network. Prepended to
+# PATH; real core tools (grep/awk/jq/…) stay reachable behind them.
+make_doctor_shims() {
+    local bindir="$1"
+    mkdir -p "$bindir"
+    cat > "$bindir/gh" <<'SHIM'
+#!/usr/bin/env bash
+case "$*" in
+  "auth status") echo "Logged in (project read:project)"; exit 0 ;;
+esac
+exit 0
+SHIM
+    cat > "$bindir/pi" <<'SHIM'
+#!/usr/bin/env bash
+case "$1" in
+  list) echo "gentle-engram pi-mcp-adapter pi-btw"; exit 0 ;;
+esac
+exit 0
+SHIM
+    cat > "$bindir/engram" <<'SHIM'
+#!/usr/bin/env bash
+case "$1" in
+  --version) echo "engram 9.9.9"; exit 0 ;;
+esac
+exit 0
+SHIM
+    chmod +x "$bindir/gh" "$bindir/pi" "$bindir/engram"
+}
+
+# ---- O1: scope project ----
+
+test_scope_project_installs_into_repo() {
+    local repo="$TEST_TMPDIR/proj"
+    make_git_repo "$repo"
+    printf '# Existing project rules\n' > "$repo/CLAUDE.md"
+
+    bash "$SETUP_SCRIPT" --agent claude-code --scope project --path "$repo" --non-interactive \
+        > /dev/null 2>&1 || { echo "project-scope setup exited non-zero"; return 1; }
+
+    # Everything lands inside the repo, not the global config dirs.
+    assert_all_skills_installed "$repo/.claude/skills" || return 1
+    assert_dir_exists "$repo/.claude/agents" || return 1
+    local agent_count
+    agent_count=$(find "$repo/.claude/agents" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')
+    assert_eq "17" "$agent_count" "17 agents into the repo" || return 1
+    assert_file_exists "$repo/.claude/hooks/kurama/archive-gate.sh" || return 1
+    # Orchestrator merged into the repo's CLAUDE.md, preserving prior content.
+    grep -qF 'Existing project rules' "$repo/CLAUDE.md" || { echo "existing CLAUDE.md content lost"; return 1; }
+    grep -qF 'BEGIN:kurama' "$repo/CLAUDE.md" || { echo "orchestrator not merged into repo CLAUDE.md"; return 1; }
+    # NOTHING was written to the global config dir.
+    if [ -d "$HOME/.claude/skills/sdd-apply" ]; then
+        echo "project scope leaked into the global ~/.claude"
+        return 1
+    fi
+    return 0
+}
+
+test_scope_project_receipt_at_repo_root() {
+    local repo="$TEST_TMPDIR/proj"
+    make_git_repo "$repo"
+    bash "$SETUP_SCRIPT" --agent claude-code --scope project --path "$repo" --non-interactive > /dev/null 2>&1
+    # Receipt lives at the repo root (O1), not in the skills dir.
+    assert_file_exists "$repo/.kurama-install-manifest.json" || return 1
+    if [ -f "$repo/.claude/skills/.kurama-install-manifest.json" ]; then
+        echo "project receipt should be at the repo root, not the skills dir"
+        return 1
+    fi
+    grep -q '"scope": "project"' "$repo/.kurama-install-manifest.json" || {
+        echo "receipt missing scope=project"; return 1; }
+    grep -q '.claude/skills/sdd-apply/SKILL.md' "$repo/.kurama-install-manifest.json" || {
+        echo "receipt paths not repo-relative"; return 1; }
+    return 0
+}
+
+test_scope_project_rejects_kurama_repo() {
+    # Never install into the Kurama repo itself.
+    if bash "$SETUP_SCRIPT" --agent claude-code --scope project --path "$REPO_DIR" --non-interactive > /dev/null 2>&1; then
+        echo "setup must refuse to install into the Kurama repo"
+        return 1
+    fi
+    return 0
+}
+
+test_scope_project_rejects_non_git_noninteractive() {
+    local plain="$TEST_TMPDIR/plain-dir"
+    mkdir -p "$plain"
+    if bash "$SETUP_SCRIPT" --agent claude-code --scope project --path "$plain" --non-interactive > /dev/null 2>&1; then
+        echo "non-interactive setup must abort on a non-git target"
+        return 1
+    fi
+    return 0
+}
+
+test_scope_project_uninstall_clean() {
+    local repo="$TEST_TMPDIR/proj"
+    make_git_repo "$repo"
+    bash "$SETUP_SCRIPT" --agent claude-code --scope project --path "$repo" --non-interactive > /dev/null 2>&1
+    mkdir -p "$repo/.claude/skills/my-custom"
+    echo "keep me" > "$repo/.claude/skills/my-custom/SKILL.md"
+
+    bash "$UNINSTALL_SCRIPT" --scope project --path "$repo" --without-pi-packages > /dev/null 2>&1
+
+    if [ -d "$repo/.claude/skills/sdd-apply" ]; then echo "sdd-apply not removed"; return 1; fi
+    if [ -d "$repo/.claude/hooks/kurama" ]; then echo "hooks dir not pruned"; return 1; fi
+    if [ -f "$repo/.kurama-install-manifest.json" ]; then echo "receipt not removed"; return 1; fi
+    assert_file_exists "$repo/.claude/skills/my-custom/SKILL.md" || return 1
+    return 0
+}
+
+# ---- O2: hooks always for claude-code ----
+
+test_hooks_installed_global_claude() {
+    bash "$SETUP_SCRIPT" --agent claude-code > /dev/null 2>&1
+    assert_file_exists "$HOME/.claude/hooks/kurama/archive-gate.sh" || return 1
+    assert_file_exists "$HOME/.claude/hooks/kurama/orchestrator-write-guard.sh" || return 1
+    [ -x "$HOME/.claude/hooks/kurama/archive-gate.sh" ] || { echo "hook not executable"; return 1; }
+    # settings.json carries a PreToolUse block pointing at hooks/kurama/.
+    local settings="$HOME/.claude/settings.json"
+    assert_file_exists "$settings" || return 1
+    grep -q 'hooks/kurama/' "$settings" || { echo "settings.json missing kurama hooks block"; return 1; }
+    # Receipt records the scripts (files[]) and the settings.json (settings[]).
+    local manifest="$HOME/.claude/skills/.kurama-install-manifest.json"
+    grep -q '../hooks/kurama/archive-gate.sh' "$manifest" || { echo "receipt missing hook script"; return 1; }
+    grep -q '../settings.json' "$manifest" || { echo "receipt missing settings entry"; return 1; }
+    return 0
+}
+
+test_hooks_merge_preserves_foreign_entries() {
+    # A pre-existing unrelated hook + top-level key must survive the merge.
+    mkdir -p "$HOME/.claude"
+    printf '{"model":"opus","hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/my/own.sh"}]}]}}\n' \
+        > "$HOME/.claude/settings.json"
+    bash "$SETUP_SCRIPT" --agent claude-code > /dev/null 2>&1
+    local settings="$HOME/.claude/settings.json"
+    grep -q '/my/own.sh' "$settings" || { echo "foreign hook lost in merge"; return 1; }
+    grep -q '"opus"' "$settings" || { echo "foreign top-level key lost in merge"; return 1; }
+    grep -q 'hooks/kurama/' "$settings" || { echo "kurama hooks not merged"; return 1; }
+    # Idempotent: a second run must not duplicate the kurama block.
+    bash "$SETUP_SCRIPT" --agent claude-code > /dev/null 2>&1
+    local n
+    n=$(grep -c 'hooks/kurama/orchestrator-write-guard.sh' "$settings")
+    assert_eq "1" "$n" "kurama guard hook must appear exactly once after re-run"
+}
+
+test_hooks_removed_by_uninstall() {
+    mkdir -p "$HOME/.claude"
+    printf '{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/my/own.sh"}]}]}}\n' \
+        > "$HOME/.claude/settings.json"
+    bash "$SETUP_SCRIPT" --agent claude-code > /dev/null 2>&1
+    bash "$UNINSTALL_SCRIPT" --agent claude-code > /dev/null 2>&1
+    # Scripts gone.
+    if [ -d "$HOME/.claude/hooks/kurama" ]; then echo "hooks dir not pruned"; return 1; fi
+    # Kurama block stripped, foreign hook preserved.
+    local settings="$HOME/.claude/settings.json"
+    if grep -q 'hooks/kurama/' "$settings"; then echo "kurama hooks block not stripped"; return 1; fi
+    grep -q '/my/own.sh' "$settings" || { echo "foreign hook lost during uninstall"; return 1; }
+    return 0
+}
+
+# ---- O4: Pi agents in project scope ----
+
+test_pi_agents_project_scope() {
+    local repo="$TEST_TMPDIR/piproj"
+    make_git_repo "$repo"
+    bash "$SETUP_SCRIPT" --agent pi --scope project --path "$repo" --non-interactive --without-pi-packages \
+        > /dev/null 2>&1 || { echo "pi project setup exited non-zero"; return 1; }
+    assert_all_skills_installed "$repo/.pi/skills" || return 1
+    assert_dir_exists "$repo/.pi/agents" || return 1
+    local count
+    count=$(find "$repo/.pi/agents" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')
+    assert_eq "17" "$count" "17 Pi agents into .pi/agents" || return 1
+    grep -qF 'BEGIN:kurama' "$repo/AGENTS.md" || { echo "pi orchestrator not merged into repo AGENTS.md"; return 1; }
+    return 0
+}
+
+# ---- O6: update.sh re-sync ----
+
+test_update_resyncs_modified_skill() {
+    bash "$SETUP_SCRIPT" --agent claude-code > /dev/null 2>&1
+    echo "TAMPERED" > "$HOME/.claude/skills/sdd-apply/SKILL.md"
+    bash "$UPDATE_SCRIPT" --agent claude-code > /dev/null 2>&1
+    if grep -q 'TAMPERED' "$HOME/.claude/skills/sdd-apply/SKILL.md"; then
+        echo "update.sh did not restore the tampered skill"
+        return 1
+    fi
+    diff -q "$HOME/.claude/skills/sdd-apply/SKILL.md" "$REPO_DIR/skills/sdd-apply/SKILL.md" > /dev/null 2>&1 || {
+        echo "restored skill does not match repo source"; return 1; }
+    return 0
+}
+
+test_update_dry_run_changes_nothing() {
+    bash "$SETUP_SCRIPT" --agent claude-code > /dev/null 2>&1
+    echo "TAMPERED" > "$HOME/.claude/skills/sdd-apply/SKILL.md"
+    bash "$UPDATE_SCRIPT" --agent claude-code --dry-run > /dev/null 2>&1
+    grep -q 'TAMPERED' "$HOME/.claude/skills/sdd-apply/SKILL.md" || {
+        echo "dry-run update must NOT modify files"; return 1; }
+    return 0
+}
+
+test_update_resyncs_project_scope() {
+    local repo="$TEST_TMPDIR/proj"
+    make_git_repo "$repo"
+    bash "$SETUP_SCRIPT" --agent claude-code --scope project --path "$repo" --non-interactive > /dev/null 2>&1
+    echo "TAMPERED" > "$repo/.claude/skills/sdd-apply/SKILL.md"
+    bash "$UPDATE_SCRIPT" --scope project --path "$repo" > /dev/null 2>&1
+    if grep -q 'TAMPERED' "$repo/.claude/skills/sdd-apply/SKILL.md"; then
+        echo "project-scope update did not restore the tampered skill"
+        return 1
+    fi
+    return 0
+}
+
+# ---- O7: doctor.sh ----
+
+test_doctor_healthy_exit_zero() {
+    local shim="$TEST_TMPDIR/doctorbin"
+    make_doctor_shims "$shim"
+    bash "$SETUP_SCRIPT" --agent claude-code > /dev/null 2>&1
+    if ! PATH="$shim:$PATH" bash "$DOCTOR_SCRIPT" --agent claude-code > /dev/null 2>&1; then
+        echo "doctor.sh should exit 0 on a healthy install"
+        return 1
+    fi
+    return 0
+}
+
+test_doctor_broken_receipt_exit_nonzero() {
+    local shim="$TEST_TMPDIR/doctorbin"
+    make_doctor_shims "$shim"
+    bash "$SETUP_SCRIPT" --agent claude-code > /dev/null 2>&1
+    # Break the install: remove a recorded file.
+    rm -f "$HOME/.claude/skills/sdd-apply/SKILL.md"
+    local output
+    output=$(PATH="$shim:$PATH" bash "$DOCTOR_SCRIPT" --agent claude-code 2>&1)
+    if [ $? -eq 0 ]; then
+        echo "doctor.sh should exit non-zero when a recorded file is missing"
+        return 1
+    fi
+    echo "$output" | grep -qi 'MISSING' || { echo "doctor.sh should report the MISSING file"; return 1; }
+    return 0
+}
+
+test_doctor_project_scope_healthy() {
+    local shim="$TEST_TMPDIR/doctorbin"
+    make_doctor_shims "$shim"
+    local repo="$TEST_TMPDIR/proj"
+    make_git_repo "$repo"
+    bash "$SETUP_SCRIPT" --agent claude-code --scope project --path "$repo" --non-interactive > /dev/null 2>&1
+    if ! PATH="$shim:$PATH" bash "$DOCTOR_SCRIPT" --scope project --path "$repo" > /dev/null 2>&1; then
+        echo "doctor.sh should exit 0 on a healthy project install"
+        return 1
+    fi
+    return 0
+}
+
+# ---- O5: Engram optional persistence engine (fake engram/brew/claude shims) ----
+
+# Local shims for the O5 flow so no real binary or network is ever touched. With
+# $3="with-engram" (default) an `engram` fake is on PATH; "no-engram" omits it so
+# the brew/guide branch is exercised. `brew` and `claude` fakes always append
+# their argv to $2 so a test can prove they were (not) invoked.
+make_engram_shims() {
+    local bindir="$1" log="$2" mode="${3:-with-engram}"
+    mkdir -p "$bindir"
+    if [ "$mode" = "with-engram" ]; then
+        cat > "$bindir/engram" <<SHIM
+#!/usr/bin/env bash
+echo "engram \$*" >> "$log"
+case "\$1" in --version) echo "engram 9.9.9" ;; esac
+exit 0
+SHIM
+        chmod +x "$bindir/engram"
+    fi
+    cat > "$bindir/brew" <<SHIM
+#!/usr/bin/env bash
+echo "brew \$*" >> "$log"
+exit 0
+SHIM
+    cat > "$bindir/claude" <<SHIM
+#!/usr/bin/env bash
+echo "claude \$*" >> "$log"
+exit 0
+SHIM
+    chmod +x "$bindir/brew" "$bindir/claude"
+}
+
+test_engram_without_flag_no_changes() {
+    bash "$SETUP_SCRIPT" --agent claude-code --without-engram --non-interactive > /dev/null 2>&1
+    # No MCP config written when Engram is declined.
+    if [ -f "$HOME/.claude.json" ]; then echo ".claude.json must not be written without engram"; return 1; fi
+    local manifest="$HOME/.claude/skills/.kurama-install-manifest.json"
+    assert_file_exists "$manifest" || return 1
+    grep -q '"engram": "no"' "$manifest" || { echo "receipt must record engram=no"; return 1; }
+    # engram_mcp array must be empty.
+    local n
+    n=$(jq '.engram_mcp | length' "$manifest")
+    assert_eq "0" "$n" "engram_mcp must be empty when declined"
+}
+
+test_engram_registers_claude_global() {
+    local bindir="$TEST_TMPDIR/engrambin" log="$TEST_TMPDIR/engram-calls.log"
+    make_engram_shims "$bindir" "$log"
+    PATH="$bindir:$PATH" bash "$SETUP_SCRIPT" --agent claude-code --with-engram --non-interactive > /dev/null 2>&1 \
+        || { echo "engram setup exited non-zero"; return 1; }
+    # Generic mcpServers.engram shape with the canonical args.
+    assert_file_exists "$HOME/.claude.json" || return 1
+    jq -e '.mcpServers.engram' "$HOME/.claude.json" > /dev/null || { echo "mcpServers.engram missing"; return 1; }
+    local args
+    args=$(jq -rc '.mcpServers.engram.args' "$HOME/.claude.json")
+    assert_eq '["mcp","--tools=agent"]' "$args" "engram args must be [mcp,--tools=agent]" || return 1
+    # Receipt records the registration and engram=yes.
+    local manifest="$HOME/.claude/skills/.kurama-install-manifest.json"
+    grep -q '"engram": "yes"' "$manifest" || { echo "receipt must record engram=yes"; return 1; }
+    local n
+    n=$(jq '.engram_mcp | length' "$manifest")
+    [ "$n" -ge 1 ] || { echo "engram_mcp must record the .claude.json path"; return 1; }
+    return 0
+}
+
+test_engram_opencode_project_shape() {
+    local bindir="$TEST_TMPDIR/engrambin" log="$TEST_TMPDIR/engram-calls.log"
+    make_engram_shims "$bindir" "$log"
+    local repo="$TEST_TMPDIR/ocproj"
+    make_git_repo "$repo"
+    PATH="$bindir:$PATH" bash "$SETUP_SCRIPT" --agent opencode --scope project --path "$repo" \
+        --with-engram --non-interactive > /dev/null 2>&1 || { echo "opencode engram setup non-zero"; return 1; }
+    # OpenCode wants command as an array on a type:local server (inject.go parity).
+    assert_file_exists "$repo/opencode.json" || return 1
+    jq -e '.mcp.engram' "$repo/opencode.json" > /dev/null || { echo "mcp.engram missing"; return 1; }
+    local type first
+    type=$(jq -r '.mcp.engram.type' "$repo/opencode.json")
+    assert_eq "local" "$type" "opencode engram server type must be local" || return 1
+    first=$(jq -r '.mcp.engram.command | type' "$repo/opencode.json")
+    assert_eq "array" "$first" "opencode engram command must be an array" || return 1
+    return 0
+}
+
+test_engram_vscode_servers_key() {
+    local bindir="$TEST_TMPDIR/engrambin" log="$TEST_TMPDIR/engram-calls.log"
+    make_engram_shims "$bindir" "$log"
+    PATH="$bindir:$PATH" bash "$SETUP_SCRIPT" --agent vscode --with-engram --non-interactive > /dev/null 2>&1 \
+        || { echo "vscode engram setup non-zero"; return 1; }
+    # VS Code uses the "servers" key (not mcpServers). Resolve the OS-specific path.
+    local mcp
+    case "$(uname -s)" in
+        Darwin) mcp="$HOME/Library/Application Support/Code/User/mcp.json" ;;
+        MINGW*|MSYS*|CYGWIN*) mcp="${APPDATA:-$HOME/AppData/Roaming}/Code/User/mcp.json" ;;
+        *) mcp="$HOME/.config/Code/User/mcp.json" ;;
+    esac
+    assert_file_exists "$mcp" || return 1
+    jq -e '.servers.engram' "$mcp" > /dev/null || { echo "servers.engram missing in vscode mcp.json"; return 1; }
+    if jq -e '.mcpServers' "$mcp" > /dev/null 2>&1; then echo "vscode must use servers, not mcpServers"; return 1; fi
+    return 0
+}
+
+test_engram_codex_toml_upsert() {
+    local bindir="$TEST_TMPDIR/engrambin" log="$TEST_TMPDIR/engram-calls.log"
+    make_engram_shims "$bindir" "$log"
+    mkdir -p "$HOME/.codex"
+    printf 'model = "gpt-5"\n\n[features]\nfoo = true\n' > "$HOME/.codex/config.toml"
+    PATH="$bindir:$PATH" bash "$SETUP_SCRIPT" --agent codex --with-engram --non-interactive > /dev/null 2>&1 \
+        || { echo "codex engram setup non-zero"; return 1; }
+    local toml="$HOME/.codex/config.toml"
+    grep -q '^\[mcp_servers.engram\]' "$toml" || { echo "[mcp_servers.engram] block missing"; return 1; }
+    grep -q 'args = \["mcp", "--tools=agent"\]' "$toml" || { echo "engram args line missing"; return 1; }
+    # Existing content survives the TOML upsert.
+    grep -q 'foo = true' "$toml" || { echo "pre-existing codex config lost"; return 1; }
+    # Idempotent: a second run must not duplicate the block.
+    PATH="$bindir:$PATH" bash "$SETUP_SCRIPT" --agent codex --with-engram --non-interactive > /dev/null 2>&1
+    local n
+    n=$(grep -c '^\[mcp_servers.engram\]' "$toml")
+    assert_eq "1" "$n" "engram block must appear exactly once after re-run"
+}
+
+test_engram_project_scope_claude() {
+    local bindir="$TEST_TMPDIR/engrambin" log="$TEST_TMPDIR/engram-calls.log"
+    make_engram_shims "$bindir" "$log"
+    local repo="$TEST_TMPDIR/enproj"
+    make_git_repo "$repo"
+    PATH="$bindir:$PATH" bash "$SETUP_SCRIPT" --agent claude-code --scope project --path "$repo" \
+        --with-engram --non-interactive > /dev/null 2>&1 || { echo "project engram setup non-zero"; return 1; }
+    # Project scope writes the Claude project MCP file (.mcp.json) inside the repo.
+    assert_file_exists "$repo/.mcp.json" || return 1
+    jq -e '.mcpServers.engram' "$repo/.mcp.json" > /dev/null || { echo ".mcp.json engram server missing"; return 1; }
+    # Receipt records it repo-relative (never a global leak).
+    grep -q '"\.mcp\.json"' "$repo/.kurama-install-manifest.json" || {
+        echo "receipt must record .mcp.json repo-relative"; return 1; }
+    if [ -f "$HOME/.claude.json" ]; then echo "project engram must not touch the global ~/.claude.json"; return 1; fi
+    return 0
+}
+
+test_engram_brew_not_invoked_noninteractive() {
+    # No engram binary on PATH + non-interactive: setup must NOT run brew (network
+    # only ever with explicit consent), yet still write the registration.
+    local bindir="$TEST_TMPDIR/engrambin" log="$TEST_TMPDIR/engram-calls.log"
+    make_engram_shims "$bindir" "$log" "no-engram"
+    : > "$log"
+    PATH="$bindir:$PATH" bash "$SETUP_SCRIPT" --agent claude-code --with-engram --non-interactive > /dev/null 2>&1 \
+        || { echo "engram setup non-zero"; return 1; }
+    if [ -f "$log" ] && grep -q 'brew ' "$log"; then echo "brew must not be invoked in non-interactive mode"; return 1; fi
+    # Registration is still written even when consent/install is skipped.
+    assert_file_exists "$HOME/.claude.json" || return 1
+    jq -e '.mcpServers.engram' "$HOME/.claude.json" > /dev/null || {
+        echo "engram MCP must still be registered when the binary install is skipped"; return 1; }
+    return 0
+}
+
+test_engram_uninstall_removes_registration() {
+    # setup --with-engram registers mcpServers.engram in ~/.claude.json; uninstall
+    # must strip exactly that entry (receipt-driven) and leave every other server
+    # and top-level key byte-intact. Fully offline (fake engram/brew/claude shims).
+    local bindir="$TEST_TMPDIR/engrambin" log="$TEST_TMPDIR/engram-calls.log"
+    make_engram_shims "$bindir" "$log"
+
+    # Pre-seed a config with an unrelated MCP server + top-level key that must survive.
+    mkdir -p "$HOME/.claude"
+    printf '{"someKey":"keep","mcpServers":{"other":{"command":"x"}}}\n' > "$HOME/.claude.json"
+
+    PATH="$bindir:$PATH" bash "$SETUP_SCRIPT" --agent claude-code --with-engram --non-interactive \
+        > /dev/null 2>&1 || { echo "engram setup exited non-zero"; return 1; }
+    jq -e '.mcpServers.engram' "$HOME/.claude.json" > /dev/null || {
+        echo "engram was not registered before uninstall"; return 1; }
+    # The receipt recorded the touched config in engram_mcp[].
+    local manifest="$HOME/.claude/skills/.kurama-install-manifest.json"
+    local n
+    n=$(jq '.engram_mcp | length' "$manifest")
+    [ "$n" -ge 1 ] || { echo "engram_mcp must record the .claude.json path"; return 1; }
+
+    # Uninstall strips the engram registration only.
+    bash "$UNINSTALL_SCRIPT" --agent claude-code --without-pi-packages > /dev/null 2>&1
+
+    if jq -e '.mcpServers.engram' "$HOME/.claude.json" > /dev/null 2>&1; then
+        echo "engram registration was NOT removed by uninstall"; return 1; fi
+    jq -e '.mcpServers.other' "$HOME/.claude.json" > /dev/null || {
+        echo "unrelated MCP server was lost during engram uninstall"; return 1; }
+    local sk
+    sk=$(jq -r '.someKey' "$HOME/.claude.json")
+    assert_eq "keep" "$sk" "unrelated top-level key preserved through engram uninstall" || return 1
+    return 0
+}
+
+test_doctor_reports_engram_mcp() {
+    local shim="$TEST_TMPDIR/doctorbin"
+    make_doctor_shims "$shim"
+    local bindir="$TEST_TMPDIR/engrambin" log="$TEST_TMPDIR/engram-calls.log"
+    make_engram_shims "$bindir" "$log"
+    PATH="$bindir:$PATH" bash "$SETUP_SCRIPT" --agent claude-code --with-engram --non-interactive > /dev/null 2>&1
+    local output
+    output=$(PATH="$shim:$PATH" bash "$DOCTOR_SCRIPT" --agent claude-code 2>&1)
+    echo "$output" | grep -qi 'Engram MCP registered' || { echo "doctor must mention the Engram MCP registration"; return 1; }
+    return 0
+}
+
+# ============================================================================
 # Run all tests
 # ============================================================================
 
@@ -1614,7 +2105,8 @@ echo -e "${BOLD}N4 — Claude Code native agents (setup.sh)${NC}"
 run_test "setup.sh installs all 17 native agents to ~/.claude/agents" test_setup_installs_all_claude_agents
 run_test "installed agents are recorded in the receipt" test_setup_agents_recorded_in_receipt
 run_test "pre-existing agent is backed up before overwrite" test_setup_agents_backs_up_preexisting
-run_test "non-claude target grows no agents dir" test_non_claude_target_has_no_agents
+run_test "Pi installs its 17 native agents (O4 wiring)" test_pi_installs_native_agents
+run_test "non-agent-shipping target grows no agents dir" test_non_target_agents_have_no_native_agents
 echo ""
 
 echo -e "${BOLD}N5 — Pi package stack (opt-in, fake pi/npm shims)${NC}"
@@ -1657,6 +2149,48 @@ run_test "plugin.json is valid JSON" test_plugin_json_valid
 run_test "marketplace.json is valid JSON" test_marketplace_json_valid
 run_test "gemini-extension.json is valid JSON" test_gemini_extension_json_valid
 run_test "plugin.json version equals VERSION file" test_plugin_json_version_matches_version_file
+echo ""
+
+echo -e "${BOLD}Phase 10b — scope project (O1)${NC}"
+run_test "project scope installs everything into the repo" test_scope_project_installs_into_repo
+run_test "project receipt lives at the repo root" test_scope_project_receipt_at_repo_root
+run_test "refuses to install into the Kurama repo" test_scope_project_rejects_kurama_repo
+run_test "non-git target aborts (non-interactive)" test_scope_project_rejects_non_git_noninteractive
+run_test "project uninstall is clean, user files survive" test_scope_project_uninstall_clean
+echo ""
+
+echo -e "${BOLD}Phase 10b — Claude Code hooks (O2)${NC}"
+run_test "hooks installed + settings block (global)" test_hooks_installed_global_claude
+run_test "hooks merge preserves foreign entries, idempotent" test_hooks_merge_preserves_foreign_entries
+run_test "uninstall strips hooks block, keeps foreign hooks" test_hooks_removed_by_uninstall
+echo ""
+
+echo -e "${BOLD}Phase 10b — Pi agents in project scope (O4)${NC}"
+run_test "Pi installs 17 agents into .pi/agents" test_pi_agents_project_scope
+echo ""
+
+echo -e "${BOLD}Phase 10b — update.sh re-sync (O6)${NC}"
+run_test "update restores a modified skill (global)" test_update_resyncs_modified_skill
+run_test "update --dry-run changes nothing" test_update_dry_run_changes_nothing
+run_test "update re-syncs a project install" test_update_resyncs_project_scope
+echo ""
+
+echo -e "${BOLD}Phase 10b — doctor.sh health check (O7)${NC}"
+run_test "doctor is green on a healthy install (exit 0)" test_doctor_healthy_exit_zero
+run_test "doctor is red on a broken receipt (exit 1)" test_doctor_broken_receipt_exit_nonzero
+run_test "doctor is green on a healthy project install" test_doctor_project_scope_healthy
+echo ""
+
+echo -e "${BOLD}Phase 10b — Engram persistence engine (O5, fake engram/brew/claude)${NC}"
+run_test "--without-engram writes zero Engram config" test_engram_without_flag_no_changes
+run_test "registers generic mcpServers.engram (claude global)" test_engram_registers_claude_global
+run_test "opencode uses command-array + type:local (project)" test_engram_opencode_project_shape
+run_test "vscode uses the servers key (not mcpServers)" test_engram_vscode_servers_key
+run_test "codex TOML block upsert is idempotent, preserves config" test_engram_codex_toml_upsert
+run_test "project scope writes .mcp.json inside the repo" test_engram_project_scope_claude
+run_test "non-interactive never invokes brew (guide only)" test_engram_brew_not_invoked_noninteractive
+run_test "uninstall strips the Engram MCP registration, rest intact" test_engram_uninstall_removes_registration
+run_test "doctor mentions the Engram MCP registration" test_doctor_reports_engram_mcp
 echo ""
 
 # ============================================================================

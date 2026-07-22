@@ -76,6 +76,22 @@ Windows PowerShell:
 .\scripts\setup.ps1 -All    # set up every detected agent
 ```
 
+**Trial it in one repo.** To evaluate Kurama in a single project without touching
+your global config, add `--scope project --path <repo>` — skills, native agents,
+hooks, and the orchestrator merge all land inside that repo, with one receipt at
+its root that `uninstall.sh` can remove cleanly:
+
+```bash
+./scripts/setup.sh --agent claude-code --scope project --path /path/to/your/repo
+```
+
+**Persistence.** By default artifacts persist to a built-in markdown fallback
+(`openspec/` / `.kurama/`). Setup asks once whether to use
+[Engram](https://github.com/Gentleman-Programming/engram) as a cross-session
+memory engine instead (`--with-engram` / `--without-engram`); when enabled it
+wires the Engram MCP server into the client being configured. See
+[docs/installation.md](docs/installation.md#engram-optional-persistence-engine).
+
 **Skills only.** If you want to install just the skills and wire the orchestrator
 yourself, use the installer scripts and then append the orchestrator prompt from
 `examples/<your-agent>/` as printed in the "Next step" notice:
@@ -211,15 +227,18 @@ exposes. "Full" means true sub-agents with isolated, fresh context windows.
 | Antigravity | Single-agent | Manual (see installation guide) |
 | Pi | Inline (skills load as instructions) | `setup.sh --agent pi` (global `~/.pi/agent/AGENTS.md`; see installation guide) |
 
-Two harness-specific extras land through the same setup command. On **Claude Code**,
+Harness-specific extras land through the same setup command. On **Claude Code**,
 `setup.sh --agent claude-code` also installs all **17 native subagents** (the 9 SDD
 phases plus 8 review-layer agents — the 4R lenses, refuter, two Judgment Day judges,
 and the fix agent) into `~/.claude/agents/`, each with its own `tools`/`model`
-frontmatter (the read-only lenses are enforced read-only by that `tools` list). On
-**Pi**, `setup.sh --agent pi` can optionally install a curated, consent-gated stack of
-Pi runtime packages (persistent memory, MCP adapter, native subagents, ask-user, web
-access, todo, side-conversations) at pinned versions — it never installs the rival
-`gentle-pi` harness. Both are detailed in [docs/installation.md](docs/installation.md).
+frontmatter (the read-only lenses are enforced read-only by that `tools` list), and
+**always installs the two deterministic hooks** (a write-guard and an archive-gate,
+merged into `settings.json`). On **Pi**, `setup.sh --agent pi` installs the **same
+17 agents** in Pi's format into `~/.pi/agent/agents/`, and can optionally add a
+curated, consent-gated stack of Pi runtime packages (persistent memory, MCP adapter,
+native subagents, ask-user, web access, todo, side-conversations) at pinned versions
+— it never installs the rival `gentle-pi` harness. All are detailed in
+[docs/installation.md](docs/installation.md).
 
 ## Documentation
 
@@ -229,7 +248,10 @@ access, todo, side-conversations) at pinned versions — it never installs the r
 - [docs/sub-agents.md](docs/sub-agents.md) — how phases run as sub-agents and share conventions.
 - [docs/persistence.md](docs/persistence.md) — the four artifact store modes in depth.
 - [docs/kanban-github.md](docs/kanban-github.md) — the optional GitHub Projects board sync module.
+- [docs/companion-skills.md](docs/companion-skills.md) — optional pairings with external process skills like superpowers.
 - [docs/token-economics.md](docs/token-economics.md) — the cost analysis behind context isolation.
+- [docs/smoke-test.md](docs/smoke-test.md) — a ~15-minute manual end-to-end walk through the SDD cycle.
+- [docs/migration.md](docs/migration.md) — upgrade notes for existing installs, phase by phase.
 - [docs/changelog.md](docs/changelog.md) — release history.
 
 ## Contributing

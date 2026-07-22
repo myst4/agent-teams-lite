@@ -106,6 +106,8 @@ test-after, RED that passes immediately, implementation-coupled tests, batch RED
 and the per-task evidence table (with its optional triangulation row) are in
 [skills/tdd/SKILL.md](../skills/tdd/SKILL.md).
 
+> **Companion compatibility:** `superpowers:test-driven-development` shares this RED → GREEN → REFACTOR cycle and is fully compatible — Kurama's module adds scenario→test traceability and audited RED evidence on top. Optional, never a hard dependency; see [docs/companion-skills.md](companion-skills.md).
+
 ## What each phase does when TDD is on
 
 | Phase | Behavior with `tdd: true` |

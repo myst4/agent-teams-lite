@@ -17,7 +17,7 @@ Each sub-agent is a SKILL.md file — pure Markdown instructions that any AI ass
 | **Implementer** | `sdd-apply/SKILL.md` | Writes code following specs and design, marks tasks complete. v2.0: TDD workflow support |
 | **Verifier** | `sdd-verify/SKILL.md` | Validates implementation against specs with real test execution. v2.0: spec compliance matrix |
 | **Archiver** | `sdd-archive/SKILL.md` | Merges delta specs into main specs, moves to archive |
-| **TDD Module** | `tdd/SKILL.md` | Optional RED-GREEN-REFACTOR cycle contract; loaded by `sdd-apply` when TDD resolves active, referenced by `sdd-tasks` and `sdd-verify`. Opt-in `tdd` manifest group, not installed by default |
+| **TDD Module** | `tdd/SKILL.md` | Optional RED-GREEN-REFACTOR cycle contract; loaded by `sdd-apply` when TDD resolves active, referenced by `sdd-tasks` and `sdd-verify`. Installed by default (`tdd` manifest group, `default: true`); activation stays opt-in per project — opt out of the module with `--without tdd` |
 | **Skill Registry** | `skill-registry/SKILL.md` | Scans user skills + project conventions, writes `.kurama/skill-registry.md` |
 | **Judgment Day** | `judgment-day/SKILL.md` | Runs dual adversarial review with two blind judges and a fix loop |
 | **Go Testing** | `go-testing/SKILL.md` | Shared conventions for Go tests, including Bubbletea and teatest patterns |
@@ -224,9 +224,61 @@ step — which is why it alone carries `Edit`/`Write`/`Bash`, and even it omits
 Removing `examples/claude-code/agents/` is safe: a project without the agent
 files keeps working exactly as before, with the orchestrator resolving skills
 and models itself per the Model Assignments table in
-[`examples/claude-code/CLAUDE.md`](../examples/claude-code/CLAUDE.md). **Hooks are
-not installed by setup** — they remain an explicit opt-in
-([docs/hooks.md](hooks.md)).
+[`examples/claude-code/CLAUDE.md`](../examples/claude-code/CLAUDE.md). **The
+deterministic hooks are now installed automatically** by
+`setup.sh --agent claude-code` (both scopes, no prompt — this changed in Phase
+10b; see [docs/installation.md](installation.md#hooks-installed-automatically)
+and [docs/hooks.md](hooks.md)).
+
+---
+
+## Native Pi Subagents (installed automatically)
+
+Pi supports the same declarative-subagent pattern, and `setup.sh --agent pi`
+installs the **same 17-agent roster** (9 SDD phases + 8 review-layer agents) in
+**Pi's** agent format into `~/.pi/agent/agents/` (global) or
+`<repo>/.pi/agents/` (`--scope project`), recorded in the receipt. The files
+live in [`examples/pi/agents/`](../examples/pi/agents/).
+
+Pi's format differs from Claude's in three ways:
+
+- **`tools` is a YAML list of Pi tool names.** Read-only lenses, the refuter,
+  and the two judges declare `tools: [read]`; `jd-fix-agent` declares
+  `[read, bash]`; SDD phase executors carry the fuller phase set (`read`,
+  `grep`, `find`, `write`, and the `memory_*` tools that back the `engram`
+  store), plus `edit` and/or `bash` only where a phase needs them. `bash` is
+  granted just to the phases that shell out — `sdd-init`, `sdd-explore`,
+  `sdd-apply`, `sdd-verify`, `sdd-archive` — while the pure planning/writing
+  phases (`sdd-propose`, `sdd-spec`, `sdd-design`, `sdd-tasks`) omit it; in
+  particular **`sdd-design` has no `bash`** (see the per-agent table below). Pi
+  also blocks every `subagent_*` tool, so no agent can delegate — the read-only
+  boundary is enforced structurally, exactly as the Claude lenses' omitted
+  `Edit`/`Write`/`Task` enforce theirs.
+- **`model` is `provider/model-id`.** The 4R lenses (and the lighter SDD phases)
+  route to `anthropic/claude-sonnet-4-5`; the refuter, both judges, the fix
+  agent, and `sdd-design`/`sdd-apply` route to `anthropic/claude-opus-4-8` —
+  the same sonnet-lens / opus-adversarial-and-fix split as the Claude agents,
+  with an `effort` hint where applicable.
+- **The body is the whole system prompt** (lean subagent mode auto-loads no
+  skill). Each agent instructs itself to `read` its Kurama skill, resolving the
+  path relative to the project in order — `skills/…` → `.pi/skills/…` →
+  `~/.pi/agent/skills/…` → `.claude/skills/…` — then follow it and return that
+  skill's envelope. The skill stays the single source of truth.
+
+| Agent(s) | `tools` (Pi) | `model` |
+|----------|--------------|---------|
+| `sdd-apply` | phase set incl. `write`, `edit`, `bash`, `memory_*` | `anthropic/claude-opus-4-8` |
+| `sdd-design` | phase set incl. `write`, `edit`, `memory_*` (no `bash`) | `anthropic/claude-opus-4-8` |
+| Other 7 SDD phases | phase set (read/inspect + phase-specific); `bash` only on `sdd-init`/`sdd-explore`/`sdd-verify`/`sdd-archive`, not on `sdd-propose`/`sdd-spec`/`sdd-tasks` | `anthropic/claude-sonnet-4-5` |
+| `review-risk`, `review-readability`, `review-reliability`, `review-resilience` | `[read]` | `anthropic/claude-sonnet-4-5` |
+| `review-refuter`, `jd-judge-a`, `jd-judge-b` | `[read]` | `anthropic/claude-opus-4-8` |
+| `jd-fix-agent` | `[read, bash]` | `anthropic/claude-opus-4-8` |
+
+Per-agent `model`/`effort` in each file are **defaults**; override them without
+editing the files via `model_profiles` in `.pi/subagents.json` (project) or
+`~/.pi/agent/subagents.json` (global), per the `subagents-configuration` skill
+shipped with the `pi-subagents` extension. Kurama never writes `subagents.json`
+— it is the recommended, documented override surface only.
 
 ---
 

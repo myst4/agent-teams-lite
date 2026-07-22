@@ -8,18 +8,27 @@ set -euo pipefail
 # Cross-platform: macOS, Linux, Windows (Git Bash / WSL). Bash 3.2 compatible.
 #
 # Usage:
-#   ./uninstall.sh --agent claude-code      # Remove from one agent target
-#   ./uninstall.sh --path /custom/skills    # Remove from an explicit directory
-#   ./uninstall.sh --all                    # Remove from every known target
-#   ./uninstall.sh --agent codex --dry-run  # Show what would be removed
+#   ./uninstall.sh --agent claude-code               # Remove from one global agent
+#   ./uninstall.sh --path /custom/skills             # Remove from an explicit dir
+#   ./uninstall.sh --scope project --path /repo       # Remove a project-scope install
+#   ./uninstall.sh --all                             # Remove from every known target
+#   ./uninstall.sh --agent codex --dry-run           # Show what would be removed
 # ============================================================================
 
 INSTALL_MANIFEST_NAME=".kurama-install-manifest.json"
+
+# Orchestrator marker pair — the block setup.sh merges into a shared prompt file.
+# uninstall strips exactly this block on removal, leaving user content intact.
+MARKER_BEGIN="<!-- BEGIN:kurama -->"
+MARKER_END="<!-- END:kurama -->"
 
 # Agents install.sh can write skills for (project-local is opt-in via --agent).
 ALL_AGENTS="claude-code opencode gemini-cli codex vscode antigravity cursor"
 
 DRY_RUN=false
+SCOPE="global"       # global | project (O1: mirrors setup.sh)
+TARGET_PATH=""       # repo root for project scope, or explicit dir for --path
+PI_PACKAGES=""       # "", "yes", or "no" — O3 Pi package revert offer
 
 # ============================================================================
 # OS detection (mirrors install.sh so target paths resolve identically)
@@ -111,6 +120,12 @@ get_tool_path() {
                 *)        echo "$HOME/.cursor/skills" ;;
             esac
             ;;
+        pi)
+            case "$OS" in
+                windows)  echo "$USERPROFILE/.pi/agent/skills" ;;
+                *)        echo "$HOME/.pi/agent/skills" ;;
+            esac
+            ;;
         project-local) echo "./skills" ;;
         *)  echo "" ;;
     esac
@@ -120,17 +135,18 @@ get_tool_path() {
 # Manifest parsing
 # ============================================================================
 
-# Emit each target-relative path listed in an install manifest's "files" array.
-# Uses jq when available, otherwise a portable awk fallback that reads the
-# one-path-per-line array written by install.sh.
-manifest_files() {
-    local manifest="$1"
+# Emit each string element of a named JSON array (files, settings, pi_packages)
+# from an install manifest. Uses jq when available, otherwise a portable awk
+# fallback that reads the one-element-per-line arrays setup.sh/install.sh write.
+manifest_json_array() {
+    local manifest="$1" key="$2"
+    [ -f "$manifest" ] || return 0
     if command -v jq >/dev/null 2>&1; then
-        jq -r '.files[]' "$manifest"
+        jq -r --arg k "$key" '(.[$k] // [])[]' "$manifest" 2>/dev/null
         return 0
     fi
-    awk '
-        /"files"[[:space:]]*:[[:space:]]*\[/ { inarr = 1; next }
+    awk -v key="$key" '
+        $0 ~ "\"" key "\"[[:space:]]*:[[:space:]]*\\[" { inarr = 1; next }
         inarr && /\]/ { inarr = 0 }
         inarr {
             line = $0
@@ -141,6 +157,179 @@ manifest_files() {
             if (line != "") print line
         }
     ' "$manifest"
+}
+
+# Back-compat wrapper: the "files" array.
+manifest_files() {
+    manifest_json_array "$1" "files"
+}
+
+# O3: surgically strip the Kurama PreToolUse hooks block (entries whose command
+# contains "hooks/kurama/") from a settings.json, leaving every other hook and
+# key untouched. Backs up + writes atomically. jq only — never sed on JSON.
+remove_hooks_from_settings() {
+    local settings_file="$1"
+    [ -f "$settings_file" ] || return 0
+
+    if ! command -v jq >/dev/null 2>&1; then
+        print_warn "jq not found — cannot strip the hooks block from $settings_file"
+        print_info "Manually remove PreToolUse entries pointing at hooks/kurama/"
+        return 0
+    fi
+
+    if $DRY_RUN; then
+        print_info "would strip kurama hooks block from: $settings_file"
+        return 0
+    fi
+
+    local cleaned
+    cleaned=$(jq '
+        if (.hooks.PreToolUse | type) == "array" then
+            .hooks.PreToolUse = (.hooks.PreToolUse | map(select(
+                (((.hooks // []) | map(.command // "") | join(" "))
+                    | contains("hooks/kurama/")) | not)))
+        else . end
+        | if (.hooks.PreToolUse | type) == "array" and (.hooks.PreToolUse | length) == 0
+            then del(.hooks.PreToolUse) else . end
+        | if (.hooks | type) == "object" and (.hooks | length) == 0
+            then del(.hooks) else . end
+    ' "$settings_file") || { print_warn "failed to clean $settings_file"; return 0; }
+
+    local tmp
+    tmp="$(mktemp "${settings_file}.XXXXXX")"
+    cp -p "$settings_file" "${settings_file}.bak.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+    printf '%s\n' "$cleaned" > "$tmp"
+    mv "$tmp" "$settings_file"
+    print_ok "stripped kurama hooks block from settings.json"
+}
+
+# O5 (uninstall): strip the Engram MCP registration Kurama wrote into a client
+# config recorded in the receipt's engram_mcp[]. JSON configs (mcpServers / mcp /
+# servers keyed) are edited with jq — never sed — deleting only the "engram" entry
+# and any parent object it emptied; the Codex config.toml block is removed with the
+# SAME awk method setup used to write it. Backup + atomic; every other server and
+# top-level key is preserved. Without jq a JSON config prints guided manual steps.
+remove_engram_from_config() {
+    local file="$1"
+    [ -f "$file" ] || return 0
+
+    if $DRY_RUN; then
+        print_info "would strip the Engram MCP registration from: $file"
+        return 0
+    fi
+
+    case "$file" in
+        *.toml)
+            # Codex TOML: drop the [mcp_servers.engram] block up to the next section
+            # header or EOF (mirror of setup.sh register_engram_codex's strip).
+            local stripped tmp
+            stripped="$(awk '
+                /^\[mcp_servers\.engram\]/ { skip=1; next }
+                skip && /^\[/ { skip=0 }
+                !skip { print }
+            ' "$file")"
+            tmp="$(mktemp "${file}.XXXXXX")" || { print_warn "mktemp failed for $file"; return 0; }
+            cp -p "$file" "${file}.bak.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+            printf '%s\n' "$stripped" > "$tmp"
+            mv "$tmp" "$file"
+            print_ok "stripped Engram MCP block from $file (codex TOML)"
+            ;;
+        *)
+            if ! command -v jq >/dev/null 2>&1; then
+                print_warn "jq not found — cannot strip the Engram MCP server from $file"
+                print_info "Manually remove the \"engram\" entry under mcpServers / mcp / servers"
+                return 0
+            fi
+            local cleaned tmp
+            cleaned=$(jq '
+                (if (.mcpServers | type) == "object" then .mcpServers |= del(.engram) else . end)
+                | (if (.mcp | type) == "object" then .mcp |= del(.engram) else . end)
+                | (if (.servers | type) == "object" then .servers |= del(.engram) else . end)
+                | (if (.mcpServers | type) == "object" and (.mcpServers | length) == 0 then del(.mcpServers) else . end)
+                | (if (.mcp | type) == "object" and (.mcp | length) == 0 then del(.mcp) else . end)
+                | (if (.servers | type) == "object" and (.servers | length) == 0 then del(.servers) else . end)
+            ' "$file") || { print_warn "failed to clean $file"; return 0; }
+            tmp="$(mktemp "${file}.XXXXXX")" || { print_warn "mktemp failed for $file"; return 0; }
+            cp -p "$file" "${file}.bak.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+            printf '%s\n' "$cleaned" > "$tmp"
+            mv "$tmp" "$file"
+            print_ok "stripped Engram MCP registration from $file"
+            ;;
+    esac
+}
+
+# Strip Kurama's orchestrator block (BEGIN:kurama … END:kurama) from a prompt file
+# recorded in the receipt's prompts[]. Only strips when BOTH markers are present —
+# an unbalanced pair is left untouched to avoid deleting user content. Everything
+# outside the block is preserved; backup + atomic.
+strip_markers_from_prompt() {
+    local file="$1"
+    [ -f "$file" ] || return 0
+    grep -qF "$MARKER_BEGIN" "$file" || return 0
+    if ! grep -qF "$MARKER_END" "$file"; then
+        print_warn "unbalanced kurama markers in $file — leaving it untouched"
+        return 0
+    fi
+
+    if $DRY_RUN; then
+        print_info "would strip the kurama orchestrator block from: $file"
+        return 0
+    fi
+
+    local stripped tmp
+    stripped="$(awk -v b="$MARKER_BEGIN" -v e="$MARKER_END" '
+        $0 == b { skip=1; next }
+        $0 == e { skip=0; next }
+        !skip   { print }
+    ' "$file")"
+    tmp="$(mktemp "${file}.XXXXXX")" || { print_warn "mktemp failed for $file"; return 0; }
+    cp -p "$file" "${file}.bak.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+    printf '%s\n' "$stripped" > "$tmp"
+    mv "$tmp" "$file"
+    print_ok "stripped kurama orchestrator block from $file"
+}
+
+# O3: offer to revert the Pi packages Kurama installed (recorded in the receipt).
+# Honors --with/--without-pi-packages; otherwise asks interactively (default no,
+# so a shared package set is never removed by surprise). Never touches gentle-pi
+# and never removes anything not recorded.
+offer_pi_uninstall() {
+    local manifest="$1"
+    local pkgs
+    pkgs="$(manifest_json_array "$manifest" "pi_packages")"
+    [ -n "$pkgs" ] || return 0
+
+    echo -e "\n${BOLD}This install recorded these Pi packages:${NC}"
+    printf '%s\n' "$pkgs" | while IFS= read -r p; do [ -n "$p" ] && echo "  - $p"; done
+
+    case "$PI_PACKAGES" in
+        yes) ;;
+        no)  print_info "Leaving Pi packages installed (--without-pi-packages)"; return 0 ;;
+        *)
+            print_info "Uninstall these Pi packages too? (they may be shared with other tools)"
+            read -rp "  Revert Pi packages? [y/N]: " ans
+            [[ "${ans:-N}" =~ ^[Yy] ]] || { print_info "Leaving Pi packages installed"; return 0; }
+            ;;
+    esac
+
+    if ! command -v pi >/dev/null 2>&1; then
+        print_warn "pi not found in PATH — cannot revert packages (skipping)"
+        return 0
+    fi
+
+    local p
+    printf '%s\n' "$pkgs" | while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        if $DRY_RUN; then
+            print_info "would run: pi uninstall $p"
+        else
+            if pi uninstall "$p" >/dev/null 2>&1; then
+                print_ok "pi uninstall $p"
+            else
+                print_warn "pi uninstall $p failed (continuing)"
+            fi
+        fi
+    done
 }
 
 # ============================================================================
@@ -179,6 +368,50 @@ remove_target() {
 $files
 EOF
 
+    # O3: strip the Kurama hooks block from every settings.json the receipt
+    # recorded, then offer to revert any recorded Pi packages. Both read the
+    # manifest, so they must run BEFORE it is deleted.
+    local sfile settings
+    settings="$(manifest_json_array "$manifest" "settings")"
+    while IFS= read -r sfile; do
+        [ -n "$sfile" ] || continue
+        remove_hooks_from_settings "$dir/$sfile"
+    done <<EOF
+$settings
+EOF
+
+    # Strip the Engram MCP registration from every config the receipt recorded
+    # (engram_mcp[]). Entries are relative to $dir, except the global Claude
+    # ~/.claude.json which is recorded absolute — honor both.
+    local efile engram_files
+    engram_files="$(manifest_json_array "$manifest" "engram_mcp")"
+    while IFS= read -r efile; do
+        [ -n "$efile" ] || continue
+        case "$efile" in
+            /*) remove_engram_from_config "$efile" ;;
+            *)  remove_engram_from_config "$dir/$efile" ;;
+        esac
+    done <<EOF
+$engram_files
+EOF
+
+    # Strip the kurama orchestrator marker block from each recorded prompt file
+    # (prompts[]), preserving the user's surrounding content. Same relative/absolute
+    # handling as engram_mcp above.
+    local pfile prompts
+    prompts="$(manifest_json_array "$manifest" "prompts")"
+    while IFS= read -r pfile; do
+        [ -n "$pfile" ] || continue
+        case "$pfile" in
+            /*) strip_markers_from_prompt "$pfile" ;;
+            *)  strip_markers_from_prompt "$dir/$pfile" ;;
+        esac
+    done <<EOF
+$prompts
+EOF
+
+    offer_pi_uninstall "$manifest"
+
     if $DRY_RUN; then
         print_info "would remove: $INSTALL_MANIFEST_NAME"
         print_info "would prune emptied skill directories under $dir"
@@ -188,24 +421,20 @@ EOF
 
     rm -f "$manifest"
 
-    # Prune the directories we emptied (skill dirs + _shared), then the root —
-    # rmdir only succeeds on empty dirs, so user-created skills are preserved.
-    # Receipt entries may live OUTSIDE the skills root (e.g. ../agents/NAME.md
-    # for native agents): stripping to the first path component would yield
-    # "..", so resolve those to their real parent directory instead.
-    local subdirs sd
-    subdirs="$(printf '%s\n' "$files" | awk 'NF {
-        n = $0
-        if (n ~ /^\.\.\//) { sub(/\/[^\/]*$/, "", n) } else { sub(/\/.*/, "", n) }
-        print n
-    }' | sort -u)"
-    while IFS= read -r sd; do
-        [ -n "$sd" ] || continue
-        [ "$sd" = ".." ] && continue
-        rmdir "$dir/$sd" 2>/dev/null || true
-    done <<EOF
-$subdirs
-EOF
+    # Prune every directory we emptied. All recorded files were already removed
+    # above, so for each one we walk from its parent directory upward toward $dir
+    # calling rmdir — which only succeeds on an empty directory, so user-created
+    # skills, sibling files, and shared config are always preserved. This handles
+    # both skill-relative global paths (sdd-apply/SKILL.md, ../agents/x.md) and the
+    # deeper project-scope paths (.claude/skills/sdd-apply/SKILL.md,
+    # .claude/hooks/kurama/x.sh) that the single-component strip could not reach.
+    printf '%s\n' "$files" | awk 'NF' | while IFS= read -r rel; do
+        pdir="$(dirname "$dir/$rel")"
+        while [ "$pdir" != "$dir" ] && [ "$pdir" != "/" ] && [ "$pdir" != "." ]; do
+            rmdir "$pdir" 2>/dev/null || break
+            pdir="$(dirname "$pdir")"
+        done
+    done
     rmdir "$dir" 2>/dev/null || true
 
     echo -e "  ${GREEN}${BOLD}$removed file(s) removed${NC}"
@@ -219,15 +448,20 @@ show_help() {
     echo "Usage: uninstall.sh [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  --agent NAME   Uninstall from a specific agent target"
-    echo "  --path DIR     Uninstall from an explicit skills directory"
-    echo "  --all          Uninstall from every known global agent target"
-    echo "  --dry-run      Show what would be removed without deleting"
-    echo "  -h, --help     Show this help"
+    echo "  --agent NAME           Uninstall from a specific agent target"
+    echo "  --scope SCOPE          'global' (default) or 'project' (mirrors setup.sh)"
+    echo "  --path DIR             Explicit dir (global) or repo root (--scope project)"
+    echo "  --all                  Uninstall from every known global agent target"
+    echo "  --with-pi-packages     Also revert recorded Pi packages (pi uninstall)"
+    echo "  --without-pi-packages  Never revert Pi packages (leave them installed)"
+    echo "  --dry-run              Show what would be removed without deleting"
+    echo "  -h, --help             Show this help"
     echo ""
     echo "Agents: claude-code, opencode, gemini-cli, codex, vscode, antigravity, cursor, project-local"
     echo ""
     echo "Only files recorded in each target's $INSTALL_MANIFEST_NAME are removed."
+    echo "The recorded settings.json hooks block, the Engram MCP registration, and the"
+    echo "orchestrator BEGIN:kurama block are stripped surgically; other keys/content stay."
 }
 
 # ============================================================================
@@ -245,6 +479,14 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --agent)   AGENT="$2"; shift 2 ;;
         --path)    CUSTOM_PATH="$2"; shift 2 ;;
+        --scope)
+            case "$2" in
+                global|project) SCOPE="$2"; shift 2 ;;
+                *) echo "Invalid scope: $2 (use 'global' or 'project')"; exit 1 ;;
+            esac
+            ;;
+        --with-pi-packages)    PI_PACKAGES="yes"; shift ;;
+        --without-pi-packages) PI_PACKAGES="no"; shift ;;
         --all)     ALL=true; shift ;;
         --dry-run) DRY_RUN=true; shift ;;
         -h|--help) show_help; exit 0 ;;
@@ -256,7 +498,11 @@ if $DRY_RUN; then
     echo -e "${YELLOW}${BOLD}Dry run — no files will be deleted.${NC}"
 fi
 
-if [[ -n "$CUSTOM_PATH" ]]; then
+# O1: project scope removes the single repo-root receipt setup.sh wrote there.
+if [[ "$SCOPE" == "project" ]]; then
+    TARGET_PATH="${CUSTOM_PATH:-$PWD}"
+    remove_target "$TARGET_PATH" "project (${AGENT:-repo})"
+elif [[ -n "$CUSTOM_PATH" ]]; then
     remove_target "$CUSTOM_PATH" "custom path"
 elif [[ -n "$AGENT" ]]; then
     target_dir="$(get_tool_path "$AGENT")"
