@@ -994,6 +994,213 @@ test_setup_pi_writes_orchestrator() {
 }
 
 # ============================================================================
+# Tests — N4: Claude Code native agents (setup.sh installs 17 agents +
+# records them in the per-target receipt for receipt-driven removal)
+# ============================================================================
+
+# The 17 native agents setup.sh must install for claude-code: 9 SDD phase agents
+# plus the 8 review/Judgment-Day agents added in Phase 10a.
+EXPECTED_AGENTS=(
+    sdd-apply sdd-archive sdd-design sdd-explore sdd-init
+    sdd-propose sdd-spec sdd-tasks sdd-verify
+    review-risk review-readability review-reliability review-resilience
+    review-refuter jd-judge-a jd-judge-b jd-fix-agent
+)
+
+test_setup_installs_all_claude_agents() {
+    bash "$SETUP_SCRIPT" --agent claude-code > /dev/null 2>&1
+    local agents_dir="$HOME/.claude/agents"
+    assert_dir_exists "$agents_dir" || return 1
+    local agent
+    for agent in "${EXPECTED_AGENTS[@]}"; do
+        assert_file_exists "$agents_dir/$agent.md" || return 1
+        assert_file_not_empty "$agents_dir/$agent.md" || return 1
+    done
+    local count
+    count=$(find "$agents_dir" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')
+    assert_eq "17" "$count" "setup.sh should install exactly 17 Claude Code agents"
+}
+
+test_setup_agents_recorded_in_receipt() {
+    # Every installed agent is listed in the SAME per-target receipt (relative to
+    # the skills dir as ../agents/NAME.md) so uninstall.sh removes them too.
+    bash "$SETUP_SCRIPT" --agent claude-code > /dev/null 2>&1
+    local manifest="$HOME/.claude/skills/.kurama-install-manifest.json"
+    assert_file_exists "$manifest" || return 1
+    grep -q '\.\./agents/review-risk.md' "$manifest" || {
+        echo "receipt missing ../agents/review-risk.md"; return 1; }
+    grep -q '\.\./agents/jd-fix-agent.md' "$manifest" || {
+        echo "receipt missing ../agents/jd-fix-agent.md"; return 1; }
+    grep -q '\.\./agents/sdd-apply.md' "$manifest" || {
+        echo "receipt missing ../agents/sdd-apply.md"; return 1; }
+    return 0
+}
+
+test_setup_agents_backs_up_preexisting() {
+    # A pre-existing agent file with the same name must be backed up (.bak.*)
+    # before it is overwritten — never silently clobbered.
+    mkdir -p "$HOME/.claude/agents"
+    local victim="$HOME/.claude/agents/review-risk.md"
+    printf 'USER CUSTOM AGENT BODY\n' > "$victim"
+
+    bash "$SETUP_SCRIPT" --agent claude-code > /dev/null 2>&1 || {
+        echo "setup.sh failed while installing agents"; return 1; }
+
+    local backups
+    backups=$(find "$HOME/.claude/agents" -name 'review-risk.md.bak.*' | wc -l | tr -d ' ')
+    if [ "$backups" -lt 1 ]; then
+        echo "No timestamped backup was created for a pre-existing agent"
+        return 1
+    fi
+    # The backup preserves the user's original content.
+    local bak
+    bak=$(find "$HOME/.claude/agents" -name 'review-risk.md.bak.*' | head -1)
+    grep -qF 'USER CUSTOM AGENT BODY' "$bak" || {
+        echo "Backup does not contain the original user content"; return 1; }
+    return 0
+}
+
+test_non_claude_target_has_no_agents() {
+    # Only claude-code ships native agents. A Pi install must not create an
+    # agents directory under the Pi tree.
+    bash "$SETUP_SCRIPT" --agent pi > /dev/null 2>&1
+    if [ -d "$HOME/.pi/agent/agents" ]; then
+        echo "Pi target unexpectedly grew a native agents directory"
+        return 1
+    fi
+    return 0
+}
+
+# ============================================================================
+# Tests — N5: Pi package stack (opt-in, consent-gated). These use FAKE pi/npm
+# shims on a temp PATH that only log their argv — no real package manager, no
+# network is ever invoked.
+# ============================================================================
+
+# Create fake pi + npm executables in $1 that append their invocation to $2.
+make_pi_shims() {
+    local bindir="$1" logfile="$2"
+    mkdir -p "$bindir"
+    cat > "$bindir/pi" <<SHIM
+#!/usr/bin/env bash
+printf 'pi %s\n' "\$*" >> "$logfile"
+exit 0
+SHIM
+    cat > "$bindir/npm" <<SHIM
+#!/usr/bin/env bash
+printf 'npm %s\n' "\$*" >> "$logfile"
+exit 0
+SHIM
+    chmod +x "$bindir/pi" "$bindir/npm"
+}
+
+test_pi_packages_exact_sequence() {
+    # With --with-pi-packages and pi on PATH, setup.sh must invoke the approved
+    # package stack in the EXACT approved order, with the pinned versions.
+    local bindir="$TEST_TMPDIR/shimbin" log="$TEST_TMPDIR/pi-calls.log"
+    make_pi_shims "$bindir" "$log"
+
+    PATH="$bindir:$PATH" bash "$SETUP_SCRIPT" --agent pi --with-pi-packages > /dev/null 2>&1 || {
+        echo "setup.sh --agent pi --with-pi-packages exited non-zero"; return 1; }
+
+    assert_file_exists "$log" || { echo "no pi/npm calls were logged"; return 1; }
+
+    # gentle-pi (rival harness) must NEVER be installed.
+    if grep -q 'gentle-pi' "$log"; then
+        echo "gentle-pi appeared in the install sequence — it must be excluded"
+        return 1
+    fi
+
+    local expected actual
+    expected="pi install npm:gentle-engram@0.1.10
+pi install npm:pi-mcp-adapter@2.11.0
+npm exec --yes --package gentle-engram@0.1.10 -- pi-engram init
+pi install npm:pi-subagents-j0k3r@1.4.1
+pi install npm:@juicesharp/rpiv-ask-user-question@2.0.0
+pi install npm:pi-web-access@0.13.0
+pi install npm:@juicesharp/rpiv-todo@2.0.0
+pi install npm:pi-btw@0.4.1"
+    actual="$(cat "$log")"
+    assert_eq "$expected" "$actual" "Pi package install sequence must match the approved order + pins"
+}
+
+test_pi_packages_without_flag_skips() {
+    # --without-pi-packages must skip the stack entirely: pi/npm are never called.
+    local bindir="$TEST_TMPDIR/shimbin" log="$TEST_TMPDIR/pi-calls.log"
+    make_pi_shims "$bindir" "$log"
+
+    PATH="$bindir:$PATH" bash "$SETUP_SCRIPT" --agent pi --without-pi-packages > /dev/null 2>&1 || {
+        echo "setup.sh --agent pi --without-pi-packages exited non-zero"; return 1; }
+
+    if [ -f "$log" ]; then
+        echo "pi/npm were invoked despite --without-pi-packages"
+        return 1
+    fi
+    # The Pi skill install itself must still have happened.
+    assert_all_skills_installed "$HOME/.pi/agent/skills" || return 1
+    return 0
+}
+
+test_pi_packages_failure_is_non_fatal() {
+    # A failing `pi install` must warn and CONTINUE — never abort setup — and the
+    # remaining packages in the sequence must still be attempted.
+    local bindir="$TEST_TMPDIR/shimbin" log="$TEST_TMPDIR/pi-calls.log"
+    mkdir -p "$bindir"
+    # pi fails ONLY for pi-mcp-adapter (2nd step); everything else succeeds.
+    cat > "$bindir/pi" <<SHIM
+#!/usr/bin/env bash
+printf 'pi %s\n' "\$*" >> "$log"
+case "\$*" in
+    *pi-mcp-adapter*) exit 7 ;;
+esac
+exit 0
+SHIM
+    cat > "$bindir/npm" <<SHIM
+#!/usr/bin/env bash
+printf 'npm %s\n' "\$*" >> "$log"
+exit 0
+SHIM
+    chmod +x "$bindir/pi" "$bindir/npm"
+
+    if ! PATH="$bindir:$PATH" bash "$SETUP_SCRIPT" --agent pi --with-pi-packages > /dev/null 2>&1; then
+        echo "a single failed pi install aborted the whole setup (must be non-fatal)"
+        return 1
+    fi
+
+    # All 8 steps must still have been attempted despite the 2nd one failing.
+    local lines
+    lines=$(wc -l < "$log" | tr -d ' ')
+    assert_eq "8" "$lines" "all 8 package steps must be attempted even when one fails" || return 1
+    grep -q 'pi-btw@' "$log" || { echo "later packages were skipped after a failure"; return 1; }
+    return 0
+}
+
+test_pi_packages_skipped_when_pi_absent() {
+    # When pi is NOT on PATH, the stack is skipped cleanly (no crash), even with
+    # --with-pi-packages. Build a restricted PATH (symlink farm) that deliberately
+    # omits pi so the absence is deterministic regardless of the host.
+    local bindir="$TEST_TMPDIR/nopi-bin"
+    mkdir -p "$bindir"
+    local tool p
+    for tool in bash sh env uname grep egrep dirname basename mkdir cp mv cat date chmod rm ls awk sed tr wc find mktemp sort head printf test jq; do
+        p="$(command -v "$tool" 2>/dev/null)" || continue
+        ln -sf "$p" "$bindir/$tool"
+    done
+    # Deliberately DO NOT link pi (or npm) into the farm.
+
+    local output
+    if ! output=$(PATH="$bindir" bash "$SETUP_SCRIPT" --agent pi --with-pi-packages 2>&1); then
+        echo "setup.sh crashed when pi was absent (must skip gracefully)"
+        return 1
+    fi
+    echo "$output" | grep -qi 'pi not found' || {
+        echo "expected a 'pi not found' skip message when pi is absent"; return 1; }
+    # Skills must still be installed even though the package stack was skipped.
+    assert_all_skills_installed "$HOME/.pi/agent/skills" || return 1
+    return 0
+}
+
+# ============================================================================
 # Tests — Review lens group (4R + refuter, default-on)
 # ============================================================================
 
@@ -1401,6 +1608,20 @@ run_test "install.sh --agent pi installs 25 skills" test_install_pi
 run_test "Exactly 25 SKILL.md files for Pi" test_pi_skill_count
 run_test "Pi install writes an install manifest" test_pi_writes_install_manifest
 run_test "setup.sh --agent pi writes orchestrator to ~/.pi/agent/AGENTS.md" test_setup_pi_writes_orchestrator
+echo ""
+
+echo -e "${BOLD}N4 — Claude Code native agents (setup.sh)${NC}"
+run_test "setup.sh installs all 17 native agents to ~/.claude/agents" test_setup_installs_all_claude_agents
+run_test "installed agents are recorded in the receipt" test_setup_agents_recorded_in_receipt
+run_test "pre-existing agent is backed up before overwrite" test_setup_agents_backs_up_preexisting
+run_test "non-claude target grows no agents dir" test_non_claude_target_has_no_agents
+echo ""
+
+echo -e "${BOLD}N5 — Pi package stack (opt-in, fake pi/npm shims)${NC}"
+run_test "exact install sequence + pins, gentle-pi excluded" test_pi_packages_exact_sequence
+run_test "--without-pi-packages skips the stack" test_pi_packages_without_flag_skips
+run_test "a failed pi install is non-fatal (continues)" test_pi_packages_failure_is_non_fatal
+run_test "stack skipped cleanly when pi is absent" test_pi_packages_skipped_when_pi_absent
 echo ""
 
 echo -e "${BOLD}Review lens group (G1, default-on)${NC}"

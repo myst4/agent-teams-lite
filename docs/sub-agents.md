@@ -78,7 +78,12 @@ Sub-agents are also instructed to save discoveries, decisions, and bug fixes to 
 
 The post-implementation review layer is a set of **read-only** sub-agent lenses the
 orchestrator runs after `sdd-apply`. Each lens is a `SKILL.md` declaring `tools: Read,
-Grep, Glob` — it finds defects and never edits, runs, or delegates.
+Grep, Glob` — it finds defects and never edits, runs, or delegates. When the lenses run
+as native Claude Code agents (installed by default, see
+[Native Claude Code Subagents](#native-claude-code-subagents-installed-automatically)),
+that read-only boundary is **enforced by the agent's `tools:` list**, not merely
+documented — the frontmatter omits `Edit`/`Write` and `Task`, so the lens is
+structurally unable to modify code or spawn sub-agents.
 
 | Lens | Skill File | Domain |
 |------|-----------|--------|
@@ -160,34 +165,68 @@ Per-agent model routing is a **multi**-mode feature only. `opencode.single.json`
 
 ---
 
-## Native Claude Code Subagents (optional)
+## Native Claude Code Subagents (installed automatically)
 
 Claude Code supports declarative subagents defined as Markdown files with
 frontmatter, as an alternative to the generic
 `Task(subagent_type: 'general', prompt: 'Read skill...')` pattern the
-orchestrator uses by default. This repo ships one such definition per SDD
-phase in [`examples/claude-code/agents/`](../examples/claude-code/agents/):
-`sdd-init.md`, `sdd-explore.md`, `sdd-propose.md`, `sdd-spec.md`,
-`sdd-design.md`, `sdd-tasks.md`, `sdd-apply.md`, `sdd-verify.md`,
-`sdd-archive.md`.
+orchestrator uses by default. This repo ships **17** such definitions in
+[`examples/claude-code/agents/`](../examples/claude-code/agents/), and
+`setup.sh --agent claude-code` installs **all of them** into `~/.claude/agents/`
+(atomic copy, timestamped backup of any same-named file, every file recorded in
+the target's `.kurama-install-manifest.json` receipt — see
+[installation](installation.md#native-subagents-installed-automatically)).
+
+The 17 split into the **9 SDD phase** agents and the **8 review-layer** agents:
+
+| Group | Agents | Count |
+|-------|--------|-------|
+| SDD phases | `sdd-init`, `sdd-explore`, `sdd-propose`, `sdd-spec`, `sdd-design`, `sdd-tasks`, `sdd-apply`, `sdd-verify`, `sdd-archive` | 9 |
+| 4R review lenses | `review-risk`, `review-readability`, `review-reliability`, `review-resilience` | 4 |
+| Adversarial refuter | `review-refuter` | 1 |
+| Judgment Day judges | `jd-judge-a` (Correctness & Security), `jd-judge-b` (Regressions & Resilience) | 2 |
+| Judgment Day fix agent | `jd-fix-agent` | 1 |
 
 Each file's frontmatter declares `name`, `description`, `tools`, and `model`;
-the body instructs the subagent to load its phase's `SKILL.md` before acting.
-Model routing mirrors the Model Assignments table already used for generic
-delegation, but is declarative instead of a table the orchestrator has to
-read and cache every session:
+the body is **thin** — it instructs the subagent to load and follow its
+corresponding Kurama skill (the phase `SKILL.md` for SDD agents; the
+`review-*/SKILL.md` + [`skills/_shared/review-ledger-contract.md`](../skills/_shared/review-ledger-contract.md)
+for the lenses; `skills/review-refuter/SKILL.md` for the refuter;
+`skills/judgment-day/SKILL.md` for the judges and fix agent) and to return the
+envelope that skill defines. The agent never duplicates the skill body — the
+skill remains the single source of truth.
 
-| Phase | Model |
-|-------|-------|
-| `sdd-design` | `opus` |
-| `sdd-apply` | `opus` |
-| All others (`sdd-init`, `sdd-explore`, `sdd-propose`, `sdd-spec`, `sdd-tasks`, `sdd-verify`, `sdd-archive`) | `sonnet` |
+### Model & tools routing
 
-This is an alternative to, not a replacement for, the generic Task-tool
-pattern above — installing `examples/claude-code/agents/` is optional. A
-project that skips it keeps working exactly as before, with the orchestrator
-resolving skills and models itself per the Model Assignments table in
-[`examples/claude-code/CLAUDE.md`](../examples/claude-code/CLAUDE.md).
+Routing is **declarative** (in each agent's frontmatter) instead of a table the
+orchestrator has to read and cache every session. The 9 SDD agents are unchanged
+from before; the 8 review-layer agents follow the routing below:
+
+| Agent(s) | `tools` | `model` |
+|----------|---------|---------|
+| `sdd-design`, `sdd-apply` | (phase tools) | `opus` |
+| Other 7 SDD phases | (phase tools) | `sonnet` |
+| `review-risk`, `review-readability`, `review-reliability`, `review-resilience` | `Read, Grep, Glob` | `sonnet` |
+| `review-refuter` | `Read, Grep, Glob` | `opus` |
+| `jd-judge-a`, `jd-judge-b` | `Read, Grep, Glob` | `opus` |
+| `jd-fix-agent` | `Read, Edit, Write, Glob, Grep, Bash` | `opus` |
+
+**The 4R lenses, the refuter, and the two judges run read-only — and that is
+enforced declaratively by their `tools:` list**, not just by convention. Each
+declares only `Read, Grep, Glob`: omitting `Edit`/`Write` makes it structurally
+unable to modify the code it judges, and omitting `Task` prevents it from
+delegating to further sub-agents. The lenses `sonnet` / refuter+judges `opus`
+split reflects cost vs. the criticality of adversarial verification. The only
+review-layer agent that can write is `jd-fix-agent` (`opus`) — the surgical fix
+step — which is why it alone carries `Edit`/`Write`/`Bash`, and even it omits
+`Task`.
+
+Removing `examples/claude-code/agents/` is safe: a project without the agent
+files keeps working exactly as before, with the orchestrator resolving skills
+and models itself per the Model Assignments table in
+[`examples/claude-code/CLAUDE.md`](../examples/claude-code/CLAUDE.md). **Hooks are
+not installed by setup** — they remain an explicit opt-in
+([docs/hooks.md](hooks.md)).
 
 ---
 

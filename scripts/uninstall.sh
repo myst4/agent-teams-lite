@@ -190,10 +190,18 @@ EOF
 
     # Prune the directories we emptied (skill dirs + _shared), then the root —
     # rmdir only succeeds on empty dirs, so user-created skills are preserved.
+    # Receipt entries may live OUTSIDE the skills root (e.g. ../agents/NAME.md
+    # for native agents): stripping to the first path component would yield
+    # "..", so resolve those to their real parent directory instead.
     local subdirs sd
-    subdirs="$(printf '%s\n' "$files" | awk 'NF { n = $0; sub(/\/.*/, "", n); print n }' | sort -u)"
+    subdirs="$(printf '%s\n' "$files" | awk 'NF {
+        n = $0
+        if (n ~ /^\.\.\//) { sub(/\/[^\/]*$/, "", n) } else { sub(/\/.*/, "", n) }
+        print n
+    }' | sort -u)"
     while IFS= read -r sd; do
         [ -n "$sd" ] || continue
+        [ "$sd" = ".." ] && continue
         rmdir "$dir/$sd" 2>/dev/null || true
     done <<EOF
 $subdirs

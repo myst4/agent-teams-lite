@@ -31,6 +31,8 @@ param(
     [string]$Agent,
     [ValidateSet('single', 'multi')]
     [string]$OpenCodeMode,
+    [switch]$WithPiPackages,
+    [switch]$WithoutPiPackages,
     [switch]$All,
     [switch]$NonInteractive,
     [switch]$Help
@@ -46,6 +48,13 @@ $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $RepoDir = Split-Path -Parent $ScriptRoot
 $SkillsSrc = Join-Path $RepoDir 'skills'
 $ExamplesDir = Join-Path $RepoDir 'examples'
+$VersionFile = Join-Path $RepoDir 'VERSION'
+
+# Name of the per-target install manifest — identical to install.ps1 and setup.sh
+# so scripts/uninstall can remove exactly what a setup.ps1 install wrote (skills,
+# _shared conventions, and the native Claude Code agents). Without this receipt a
+# setup.ps1 install would be un-uninstallable (orphaned skills + agents).
+$InstallManifestName = '.kurama-install-manifest.json'
 
 $MarkerBegin = '<!-- BEGIN:kurama -->'
 $MarkerEnd = '<!-- END:kurama -->'
@@ -57,6 +66,23 @@ $GaiMarkerEnd = '<!-- /gentle-ai:sdd-orchestrator -->'
 # Pinned npm dependency for the OpenCode background-agents plugin.
 # Version-locked and installed with --ignore-scripts to limit supply-chain risk.
 $UniqueNamesGeneratorVersion = '4.7.1'
+
+# ----------------------------------------------------------------------------
+# N5: Pi package stack (opt-in). Mirrors setup.sh. Versions are PINNED — they
+# were resolved once with `npm view <pkg> version` (the only network call) and
+# hardcoded for a reproducible, auditable install. Refresh a pin with
+# `npm view <pkg> version`.
+#
+# EXCLUSION — gentle-pi is deliberately NOT installed. It is a rival harness
+# that conflicts with Kurama's own orchestrator rule and skills on Pi. Never
+# add it here.
+$PiPkgGentleEngramVersion = '0.1.10'
+$PiPkgMcpAdapterVersion   = '2.11.0'
+$PiPkgSubagentsVersion    = '1.4.1'
+$PiPkgAskUserVersion      = '2.0.0'
+$PiPkgWebAccessVersion    = '0.13.0'
+$PiPkgTodoVersion         = '2.0.0'
+$PiPkgBtwVersion          = '0.4.1'
 
 # Content headings that indicate orchestrator is already present
 $OrchestratorHeadings = @(
@@ -143,6 +169,40 @@ function Find-Agents {
 }
 
 # ============================================================================
+# Version + manifest helpers
+# Kept in sync with install.ps1 / setup.sh so every installer writes the SAME
+# per-target receipt. uninstall then removes exactly what was written.
+# ============================================================================
+
+function Get-KuramaVersion {
+    if (Test-Path $VersionFile) {
+        $v = Get-Content -Path $VersionFile -TotalCount 1 -ErrorAction SilentlyContinue
+        if ($v) { return $v.Trim() }
+    }
+    return 'unknown'
+}
+
+# Record what we installed under a target (skills, _shared conventions, and the
+# native Claude Code agents) so scripts/uninstall can remove an exact file list.
+# Same schema/fields as install.ps1's writer and setup.sh's write_install_manifest.
+function Write-InstallManifest {
+    param(
+        [string]$TargetDir,
+        [string]$ToolName,
+        [string[]]$Files
+    )
+    $obj = [ordered]@{
+        name    = 'kurama'
+        version = (Get-KuramaVersion)
+        tool    = $ToolName
+        files   = @($Files)
+    }
+    $json = $obj | ConvertTo-Json -Depth 4
+    $manifestPath = Join-Path $TargetDir $InstallManifestName
+    Set-Content -Path $manifestPath -Value $json -Encoding UTF8
+}
+
+# ============================================================================
 # Install Skills
 # ============================================================================
 
@@ -152,24 +212,42 @@ function Install-Skills {
     Write-Info "Installing skills -> $TargetDir"
     New-Item -ItemType Directory -Path $TargetDir -Force | Out-Null
 
+    # Target-relative paths we write, recorded in the install manifest so
+    # uninstall removes exactly what we installed (skills, _shared, and — for
+    # claude-code — the native agents under the sibling ../agents dir).
+    $installedFiles = New-Object System.Collections.Generic.List[string]
+
     # Copy _shared
     $sharedSrc = Join-Path $SkillsSrc '_shared'
     $sharedTarget = Join-Path $TargetDir '_shared'
     if (Test-Path $sharedSrc) {
         New-Item -ItemType Directory -Path $sharedTarget -Force | Out-Null
-        Copy-Item -Path (Join-Path $sharedSrc '*.md') -Destination $sharedTarget -Force
+        foreach ($sharedFile in @(Get-ChildItem -Path $sharedSrc -Filter '*.md' -File)) {
+            Copy-Item -Path $sharedFile.FullName -Destination $sharedTarget -Force
+            $installedFiles.Add("_shared/$($sharedFile.Name)")
+        }
         Write-Ok '_shared conventions'
     }
 
-    # Copy all distributable skills. The default set now includes the `tdd`
-    # module; installing the module does NOT activate TDD (activation stays
-    # opt-in per project). Kept in sync with setup.sh's manifest-derived default.
+    # Copy all distributable skills, manifest-driven: skills/manifest.json is the
+    # single source of truth (mirrors setup.sh's manifest_skill_lines and
+    # install.ps1's Get-ManifestSkills — a hardcoded list here already drifted
+    # once, silently omitting kanban-github). The default set is every
+    # default-on group; installing the `tdd` module does NOT activate TDD
+    # (activation stays opt-in per project).
     $count = 0
-    $skillDirs = @(Get-ChildItem -Path $SkillsSrc -Directory -Filter 'sdd-*')
-    foreach ($extraSkill in @('skill-registry', 'judgment-day', 'review-risk', 'review-readability', 'review-reliability', 'review-resilience', 'review-refuter', 'go-testing', 'tdd', 'skill-creator', 'branch-pr', 'issue-creation')) {
-        $extraDir = Join-Path $SkillsSrc $extraSkill
-        if (Test-Path $extraDir) {
-            $skillDirs += Get-Item $extraDir
+    $manifestFile = Join-Path $SkillsSrc 'manifest.json'
+    if (-not (Test-Path $manifestFile)) {
+        throw "Missing skills/manifest.json (the skill list source of truth)"
+    }
+    $defaultGroups = @{ 'sdd-core' = $true; 'quality' = $true; 'review' = $true; 'optional' = $true; 'tdd' = $true }
+    $manifest = Get-Content -Path $manifestFile -Raw | ConvertFrom-Json
+    $skillDirs = @()
+    foreach ($entry in $manifest.skills) {
+        if (-not $defaultGroups.ContainsKey($entry.group)) { continue }
+        $entryDir = Join-Path $SkillsSrc $entry.name
+        if (Test-Path $entryDir) {
+            $skillDirs += Get-Item $entryDir
         }
     }
 
@@ -180,10 +258,42 @@ function Install-Skills {
         $targetSkillDir = Join-Path $TargetDir $skillDir.Name
         New-Item -ItemType Directory -Path $targetSkillDir -Force | Out-Null
         Copy-Item -Path $skillFile -Destination (Join-Path $targetSkillDir 'SKILL.md') -Force
+        $installedFiles.Add("$($skillDir.Name)/SKILL.md")
         $count++
     }
 
     Write-Ok "$count skills installed"
+
+    # N4: Claude Code native agents. Install every examples/claude-code/agents/*.md
+    # into ~/.claude/agents/ (a sibling of the skills target). Pre-existing files
+    # with the same name are backed up (Backup-File) then replaced atomically
+    # (Write-AtomicFile), and each installed agent is recorded in the SAME
+    # per-target receipt as a path relative to the skills dir (../agents/NAME.md)
+    # so uninstall removes them too. Only claude-code ships native agents; other
+    # targets are untouched. Mirrors the setup.sh behavior.
+    if ($AgentName -eq 'claude-code') {
+        $agentsSrc = Join-Path $ExamplesDir 'claude-code\agents'
+        $agentsTarget = Join-Path (Split-Path -Parent $TargetDir) 'agents'
+        if (Test-Path $agentsSrc) {
+            New-Item -ItemType Directory -Path $agentsTarget -Force | Out-Null
+            $acount = 0
+            foreach ($agentFile in @(Get-ChildItem -Path $agentsSrc -Filter '*.md' -File)) {
+                $agentDest = Join-Path $agentsTarget $agentFile.Name
+                if (Test-Path $agentDest) { Backup-File -Path $agentDest }
+                Write-AtomicFile -Path $agentDest -Content (Get-Content -Path $agentFile.FullName -Raw) -NoNewline
+                $installedFiles.Add("../agents/$($agentFile.Name)")
+                $acount++
+            }
+            Write-Ok "$acount Claude Code agents installed -> $agentsTarget"
+        } else {
+            Write-Warn "Claude Code agents source not found: $agentsSrc (skipped)"
+        }
+    }
+
+    # Write the same install receipt install.ps1 / setup.sh write, so uninstall
+    # works for setup.ps1 installs too (skills + _shared + ../agents/*.md). Without
+    # this a setup.ps1 install would be un-uninstallable and orphan every file.
+    Write-InstallManifest -TargetDir $TargetDir -ToolName $AgentName -Files $installedFiles.ToArray()
 }
 
 # ============================================================================
@@ -489,6 +599,78 @@ function Set-OpenCode {
 }
 
 # ============================================================================
+# N5: Pi package stack (opt-in, consent-gated) — mirrors setup.sh
+# ============================================================================
+
+function Get-PiPackagesDecision {
+    # Honor explicit switches first, then ask (default No), then non-interactive No.
+    if ($WithPiPackages) { return $true }
+    if ($WithoutPiPackages) { return $false }
+    if ($NonInteractive) { return $false }
+
+    Write-Host ''
+    Write-Host '  Install the Pi package stack?' -ForegroundColor White
+    Write-Host '  Adds: gentle-engram (memory), pi-mcp-adapter, pi-subagents-j0k3r,'
+    Write-Host '  rpiv-ask-user-question, pi-web-access, rpiv-todo, pi-btw.'
+    Write-Host '  (gentle-pi is intentionally excluded - it conflicts with Kurama.)'
+    Write-Host ''
+    $answer = Read-Host '  Install Pi packages? [y/N]'
+    return ($answer -match '^[Yy]')
+}
+
+function Invoke-PiStep {
+    param([string]$Label, [scriptblock]$Action)
+    Write-Info "Pi: $Label"
+    try {
+        & $Action
+        if ($LASTEXITCODE -ne 0) { throw "exit code $LASTEXITCODE" }
+        Write-Ok $Label
+        $script:PiInstallOk += "  [ok] $Label"
+    } catch {
+        Write-Warn "$Label failed - continuing"
+        $script:PiInstallFail += "  [x] $Label"
+    }
+}
+
+function Install-PiPackages {
+    if (-not (Get-PiPackagesDecision)) {
+        Write-Info 'Skipping Pi package stack (opt-in)'
+        return
+    }
+
+    Write-Head 'Installing Pi package stack'
+
+    if (-not (Get-Command pi -ErrorAction SilentlyContinue)) {
+        Write-Warn 'pi not found in PATH - skipping the Pi package stack'
+        Write-Info 'Install Pi first, then re-run: .\setup.ps1 -Agent pi -WithPiPackages'
+        return
+    }
+
+    $script:PiInstallOk = @()
+    $script:PiInstallFail = @()
+
+    # Approved order — pins hardcoded above and refreshed via `npm view`.
+    Invoke-PiStep "gentle-engram@$PiPkgGentleEngramVersion" { pi install "npm:gentle-engram@$PiPkgGentleEngramVersion" }
+    Invoke-PiStep "pi-mcp-adapter@$PiPkgMcpAdapterVersion" { pi install "npm:pi-mcp-adapter@$PiPkgMcpAdapterVersion" }
+    Invoke-PiStep "pi-engram init (gentle-engram@$PiPkgGentleEngramVersion)" { npm exec --yes --package "gentle-engram@$PiPkgGentleEngramVersion" -- pi-engram init }
+    Invoke-PiStep "pi-subagents-j0k3r@$PiPkgSubagentsVersion" { pi install "npm:pi-subagents-j0k3r@$PiPkgSubagentsVersion" }
+    Invoke-PiStep "@juicesharp/rpiv-ask-user-question@$PiPkgAskUserVersion" { pi install "npm:@juicesharp/rpiv-ask-user-question@$PiPkgAskUserVersion" }
+    Invoke-PiStep "pi-web-access@$PiPkgWebAccessVersion" { pi install "npm:pi-web-access@$PiPkgWebAccessVersion" }
+    Invoke-PiStep "@juicesharp/rpiv-todo@$PiPkgTodoVersion" { pi install "npm:@juicesharp/rpiv-todo@$PiPkgTodoVersion" }
+    Invoke-PiStep "pi-btw@$PiPkgBtwVersion" { pi install "npm:pi-btw@$PiPkgBtwVersion" }
+
+    Write-Host ''
+    if ($script:PiInstallOk.Count -gt 0) {
+        Write-Info 'Pi packages installed:'
+        $script:PiInstallOk | ForEach-Object { Write-Host $_ }
+    }
+    if ($script:PiInstallFail.Count -gt 0) {
+        Write-Warn 'Pi packages that failed (setup continued anyway):'
+        $script:PiInstallFail | ForEach-Object { Write-Host $_ }
+    }
+}
+
+# ============================================================================
 # Full Setup for One Agent
 # ============================================================================
 
@@ -509,6 +691,11 @@ function Set-Agent {
             Set-Orchestrator -PromptPath $promptPath -ExampleFile $exampleFile -AgentName $AgentName
         }
     }
+
+    # N5: offer the Pi package stack only for the Pi target.
+    if ($AgentName -eq 'pi') {
+        Install-PiPackages
+    }
 }
 
 # ============================================================================
@@ -523,6 +710,8 @@ try {
         Write-Host '  -All               Auto-detect and install for all found agents'
         Write-Host '  -Agent NAME        Install for a specific agent'
         Write-Host '  -OpenCodeMode M    OpenCode agent mode: single or multi (per-phase models)'
+        Write-Host '  -WithPiPackages    Install the Pi package stack (-Agent pi, non-interactive)'
+        Write-Host '  -WithoutPiPackages Skip the Pi package stack (-Agent pi, non-interactive)'
         Write-Host '  -NonInteractive    No prompts (for external installers)'
         Write-Host '  -Help              Show this help'
         Write-Host ''

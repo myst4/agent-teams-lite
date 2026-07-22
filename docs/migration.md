@@ -485,6 +485,61 @@ is simply off. The 5-stage lifecycle (Backlog → Ready → In Progress → In R
 Done), the assignment rule, the WARNING-on-failure semantics, and the human merge
 gate are documented in [docs/kanban-github.md](kanban-github.md).
 
+## Phase 10a — Native agents full install, Pi package stack
+
+### Claude Code now installs all 17 native subagents (was 9, manual/optional)
+
+Through Phase 4, `examples/claude-code/agents/` shipped **9** declarative subagents
+(one per SDD phase) and installing them was **optional and manual** — setup wired only
+skills + the orchestrator. Phase 10a adds **8 review-layer agents** to that directory —
+the four 4R lenses (`review-risk`, `review-readability`, `review-reliability`,
+`review-resilience`), the `review-refuter`, the two Judgment Day judges (`jd-judge-a`,
+`jd-judge-b`), and the `jd-fix-agent` — bringing it to **17**, and makes
+`setup.sh`/`setup.ps1 --agent claude-code` **install all 17 automatically** into
+`~/.claude/agents/`. The install backs up any pre-existing same-named file (timestamped,
+via the shared `make_backup`), copies atomically, and records **every** installed agent
+in the target's `.kurama-install-manifest.json` receipt so `scripts/uninstall.sh` can
+remove exactly what setup added.
+
+Each new agent is **thin**: frontmatter (`name`, `description` with a Trigger, `tools`,
+`model`) plus a body that loads and follows its Kurama skill and returns that skill's
+envelope — it never duplicates the skill body. Tools/model routing: the 4R lenses run
+`tools: Read, Grep, Glob` + `model: sonnet`; `review-refuter`, `jd-judge-a`, and
+`jd-judge-b` run `Read, Grep, Glob` + `model: opus`; `jd-fix-agent` runs
+`Read, Edit, Write, Glob, Grep, Bash` + `model: opus`. The four lenses, the refuter, and
+the judges are **read-only enforced by the `tools:` list** (no `Edit`/`Write`, no
+`Task`). The 9 SDD phase agents are unchanged.
+
+**Action required**: none functionally. Re-run `setup.sh --agent claude-code` once to
+land the 17 agents in `~/.claude/agents/` (existing same-named files are backed up
+first). Removing the agents is safe — the orchestrator falls back to resolving models
+and skills itself. **Hooks are still not installed by setup** (that decision is
+unchanged) — wire `examples/claude-code/hooks/` yourself if you want the deterministic
+gates.
+
+### Optional Pi package stack (opt-in, consent-gated)
+
+`setup.sh`/`setup.ps1 --agent pi` can now install a curated stack of Pi runtime
+packages in addition to the skills + orchestrator. It is **opt-in**: an interactive
+prompt asks first, and non-interactive runs choose with `--with-pi-packages` /
+`--without-pi-packages`. With a **yes**, it installs, in order, at pinned versions:
+`gentle-engram@0.1.10`, `pi-mcp-adapter@2.11.0`, then a one-time `pi-engram init`
+(`npm exec --yes --package gentle-engram@0.1.10 -- pi-engram init`),
+`pi-subagents-j0k3r@1.4.1`, `@juicesharp/rpiv-ask-user-question@2.0.0`,
+`pi-web-access@0.13.0`, `@juicesharp/rpiv-todo@2.0.0`, and `pi-btw@0.4.1` — that is
+**7 packages plus the init step**. Failures never abort setup: a missing `pi` on `PATH`
+skips the whole step, an individual `pi install` failure warns and continues, and a
+final summary reports what installed. Pins are hardcoded in the scripts (refresh with
+`npm view <package> version`). See [docs/installation.md](installation.md#optional-pi-package-stack).
+
+**`gentle-pi` is deliberately excluded** and never installed by the stack — it is a
+rival, batteries-included Pi harness whose own orchestrator/skill wiring directly
+conflicts with Kurama's Pi setup over the same orchestration surface.
+
+**Action required**: none. The stack is opt-in; a plain `setup.sh --agent pi` still only
+wires skills + the orchestrator unless you opt in. Requires `pi` on `PATH`; the packages
+land in your Pi environment, not in this repo.
+
 ## Detecting an old install/clone
 
 - No `VERSION` file at the repo root → your clone predates Phase 2

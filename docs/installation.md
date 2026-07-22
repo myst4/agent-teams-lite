@@ -64,7 +64,10 @@ per-project switch (see [docs/tdd.md](tdd.md) and [docs/kanban-github.md](kanban
 
 ## Claude Code
 
-> **Automatic:** `./scripts/setup.sh --agent claude-code` handles all steps below.
+> **Automatic:** `./scripts/setup.sh --agent claude-code` handles all steps below,
+> and additionally installs the **17 native subagents** into `~/.claude/agents/`
+> (see [Native subagents](#native-subagents-installed-automatically) at the end of
+> this section).
 
 <details>
 <summary>Manual installation</summary>
@@ -101,11 +104,28 @@ example:
 This is an alternative to `setup.sh`/`install.sh`, not a replacement — both
 paths install the same skill set.
 
-**Native subagents (optional).** [`examples/claude-code/agents/`](../examples/claude-code/agents/)
-ships one declarative subagent file per SDD phase (frontmatter `name`,
-`description`, `tools`, `model`) as an alternative to the generic
-Task-tool delegation pattern. See [docs/sub-agents.md](sub-agents.md#native-claude-code-subagents-optional)
-for the model routing table and how it relates to the default pattern.
+<a id="native-subagents-installed-automatically"></a>
+**Native subagents (installed automatically).** `setup.sh --agent claude-code`
+now installs **all 17** declarative subagent files from
+[`examples/claude-code/agents/`](../examples/claude-code/agents/) into
+`~/.claude/agents/` — the **9 SDD phase** agents plus the **8 review-layer**
+agents (the four 4R lenses `review-risk`/`review-readability`/`review-reliability`/`review-resilience`,
+the `review-refuter`, the two Judgment Day judges `jd-judge-a`/`jd-judge-b`, and
+the `jd-fix-agent`). Each file is copied **atomically**; any pre-existing file
+with the same name is **backed up first** (timestamped, via the shared
+`make_backup`), and every installed agent is recorded in the target's
+`.kurama-install-manifest.json` receipt so `scripts/uninstall.sh` can later
+remove exactly what setup added. Each agent's frontmatter (`name`,
+`description`, `tools`, `model`) drives model routing and the read-only tool
+boundary; see [docs/sub-agents.md](sub-agents.md#native-claude-code-subagents-installed-automatically)
+for the full roster and the model/tools table.
+
+Installing the agents changes nothing about how skills or the orchestrator
+behave — a project that removes them keeps working exactly as before, with the
+orchestrator resolving models and skills itself per the Model Assignments table
+in [`examples/claude-code/CLAUDE.md`](../examples/claude-code/CLAUDE.md). **Hooks
+are not installed by setup** — wire `examples/claude-code/hooks/` yourself if you
+want the deterministic gates (see [docs/hooks.md](hooks.md)).
 
 ---
 
@@ -395,6 +415,46 @@ and re-runnable.
 > **Note:** Pi routes models per-agent, so no orchestrator-level model table is
 > injected. Like Gemini CLI and Codex, Pi reads the skills as inline instructions
 > rather than spawning true fresh-context sub-agents.
+
+### Optional Pi package stack
+
+Beyond the skills + orchestrator, `setup.sh --agent pi` can also install a curated
+stack of **Pi packages** that give Pi the runtime pieces the SDD workflow leans on —
+persistent memory, an MCP adapter, native subagents, an ask-user primitive, web
+access, a todo overlay, and side-conversation support. This step is **opt-in and
+consent-gated**: the script **asks** before installing anything, and non-interactive
+runs decide with `--with-pi-packages` / `--without-pi-packages`. Failure handling is
+deliberately non-fatal — if `pi` is not on `PATH` the whole step is **skipped** with a
+clear message; if an individual `pi install` fails it is logged as a **warning** and
+the sequence continues (a failed package never aborts setup); and a final **summary**
+reports what installed and what did not. `setup.ps1` mirrors this on Windows.
+
+The packages install in this **exact order**, at **pinned** versions:
+
+| # | Command | Package (what it adds) |
+|---|---------|------------------------|
+| 1 | `pi install npm:gentle-engram@0.1.10` | `gentle-engram` — persistent memory shared across sessions, compactions, and MCP agents |
+| 2 | `pi install npm:pi-mcp-adapter@2.11.0` | `pi-mcp-adapter` — MCP (Model Context Protocol) adapter extension |
+| 3 | `npm exec --yes --package gentle-engram@0.1.10 -- pi-engram init` | one-time `pi-engram` initialization (uses the `gentle-engram` pin) |
+| 4 | `pi install npm:pi-subagents-j0k3r@1.4.1` | `pi-subagents-j0k3r` — markdown-defined subagents, delegated task tools, history, model profiles |
+| 5 | `pi install npm:@juicesharp/rpiv-ask-user-question@2.0.0` | `@juicesharp/rpiv-ask-user-question` — structured ask-user questionnaire with typed options |
+| 6 | `pi install npm:pi-web-access@0.13.0` | `pi-web-access` — web search, URL fetch, repo cloning, PDF/YouTube extraction |
+| 7 | `pi install npm:@juicesharp/rpiv-todo@2.0.0` | `@juicesharp/rpiv-todo` — live todo overlay that survives `/reload` and compaction |
+| 8 | `pi install npm:pi-btw@0.4.1` | `pi-btw` — parallel side conversations via `/btw` |
+
+That is **7 `pi install` packages plus the one-time `pi-engram init`** (step 3, which
+reuses `gentle-engram` rather than being an eighth package). The pins are **hardcoded**
+in `setup.sh` (and mirrored in `setup.ps1`); to refresh one, run
+`npm view <package> version` and update the pin in the script.
+
+> **`gentle-pi` is deliberately excluded.** The stack **never** installs `gentle-pi`.
+> `gentle-pi` is a rival, batteries-included Pi harness that ships its own orchestrator
+> and skill wiring — the same orchestration surface Kurama's Pi setup already owns.
+> Installing it alongside this setup would create a **direct conflict** over that
+> surface (two competing orchestrators fighting for `~/.pi/agent/AGENTS.md` and the
+> agent runtime). Kurama therefore installs only the individual runtime packages above
+> and never the competing harness. If you specifically want the `gentle-pi` experience,
+> use it on its own, not layered on top of Kurama's Pi install.
 
 ---
 

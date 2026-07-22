@@ -44,6 +44,29 @@ GAI_MARKER_END="<!-- /gentle-ai:sdd-orchestrator -->"
 # Version-locked and installed with --ignore-scripts to limit supply-chain risk.
 UNIQUE_NAMES_GENERATOR_VERSION="4.7.1"
 
+# ----------------------------------------------------------------------------
+# N5: Pi package stack (opt-in). setup.sh --agent pi can install a curated set
+# of Pi packages that light up the same orchestrator workflow on Pi (Engram
+# memory, the MCP adapter, subagents, ask-user/todo/web-access/btw helpers).
+#
+# Versions are PINNED. They were resolved once with `npm view <pkg> version`
+# (the only network call this script makes) and hardcoded here for a
+# reproducible, supply-chain-auditable install. To refresh a pin, run:
+#     npm view <pkg> version
+# and update the matching constant below.
+#
+# EXCLUSION — gentle-pi is deliberately NOT in this stack. gentle-pi is a rival
+# harness that overlaps and directly conflicts with Kurama's own orchestrator
+# rule and skills on Pi; installing it would fight Kurama for the same surface.
+# We never install it. Do not add it here.
+PI_PKG_GENTLE_ENGRAM_VERSION="0.1.10"
+PI_PKG_MCP_ADAPTER_VERSION="2.11.0"
+PI_PKG_SUBAGENTS_VERSION="1.4.1"
+PI_PKG_ASK_USER_VERSION="2.0.0"
+PI_PKG_WEB_ACCESS_VERSION="0.13.0"
+PI_PKG_TODO_VERSION="2.0.0"
+PI_PKG_BTW_VERSION="0.4.1"
+
 # Content headings that indicate orchestrator is already present
 ORCHESTRATOR_HEADINGS=(
     "## Kurama Orchestrator"
@@ -336,6 +359,38 @@ $skill_name/SKILL.md"
     if [ "$count" -eq 0 ]; then
         fail "No skills resolved from $MANIFEST_FILE — is this a complete clone?"
         exit 1
+    fi
+
+    # N4: Claude Code native agents. Install every examples/claude-code/agents/*.md
+    # into ~/.claude/agents/ (a sibling of the skills target). Pre-existing files
+    # with the same name are backed up (make_backup) then replaced atomically, and
+    # each installed agent is recorded in the SAME per-target receipt as a path
+    # relative to the skills dir (../agents/NAME.md) so uninstall.sh removes them
+    # too. Only claude-code ships native agents; other targets are untouched.
+    if [ "$agent_name" = "claude-code" ]; then
+        local agents_src="$EXAMPLES_DIR/claude-code/agents"
+        local agents_target
+        agents_target="$(dirname "$target_dir")/agents"
+        if [ -d "$agents_src" ]; then
+            mkdir -p "$agents_target"
+            local agent_file agent_base agent_dest acount=0
+            for agent_file in "$agents_src"/*.md; do
+                [ -f "$agent_file" ] || continue
+                agent_base="$(basename "$agent_file")"
+                agent_dest="$agents_target/$agent_base"
+                if [ -f "$agent_dest" ]; then
+                    make_backup "$agent_dest"
+                    make_writable "$agent_dest"
+                fi
+                atomic_replace "$agent_dest" < "$agent_file"
+                installed_files="$installed_files
+../agents/$agent_base"
+                acount=$((acount + 1))
+            done
+            ok "$acount Claude Code agents installed → $agents_target"
+        else
+            warn "Claude Code agents source not found: $agents_src (skipped)"
+        fi
     fi
 
     # Write the same install receipt install.sh writes, so uninstall.sh works for
@@ -665,6 +720,103 @@ setup_opencode() {
 }
 
 # ============================================================================
+# N5: Pi package stack (opt-in, consent-gated)
+# ============================================================================
+
+# Decide whether to install the Pi package stack. Honors the explicit
+# --with-pi-packages / --without-pi-packages flags; otherwise asks interactively
+# (and defaults to "no" when non-interactive so external installers never
+# surprise-install packages). Sets PI_PACKAGES to "yes" or "no".
+ask_pi_packages() {
+    case "$PI_PACKAGES" in
+        yes|no) return 0 ;;
+    esac
+
+    if $NON_INTERACTIVE; then
+        PI_PACKAGES="no"
+        return 0
+    fi
+
+    echo ""
+    echo -e "  ${BOLD}Install the Pi package stack?${NC}"
+    echo "  Adds: gentle-engram (memory), pi-mcp-adapter, pi-subagents-j0k3r,"
+    echo "  rpiv-ask-user-question, pi-web-access, rpiv-todo, pi-btw."
+    echo "  (gentle-pi is intentionally excluded — it conflicts with Kurama.)"
+    echo ""
+    read -rp "  Install Pi packages? [y/N]: " pi_answer
+    pi_answer="${pi_answer:-N}"
+    if [[ "$pi_answer" =~ ^[Yy] ]]; then
+        PI_PACKAGES="yes"
+    else
+        PI_PACKAGES="no"
+    fi
+}
+
+# Run a single `pi install` (or arbitrary pi/npm command) as a non-fatal step:
+# a failure warns and is recorded, but never aborts the surrounding setup.
+# Args: <human-label> <command...>. Appends to PI_INSTALL_OK / PI_INSTALL_FAIL.
+pi_run_step() {
+    local label="$1"; shift
+    info "Pi: $label"
+    if "$@"; then
+        ok "$label"
+        PI_INSTALL_OK="$PI_INSTALL_OK
+  ✓ $label"
+    else
+        warn "$label failed — continuing"
+        PI_INSTALL_FAIL="$PI_INSTALL_FAIL
+  ✗ $label"
+    fi
+}
+
+# Install the curated Pi package stack in the EXACT approved order. Skips cleanly
+# when pi is not on PATH. Each step is non-fatal (warn + continue). gentle-pi is
+# never installed (see the exclusion note at the top of this file).
+setup_pi_packages() {
+    ask_pi_packages
+    [ "$PI_PACKAGES" = "yes" ] || { info "Skipping Pi package stack (opt-in)"; return 0; }
+
+    header "Installing Pi package stack"
+
+    if ! command -v pi &>/dev/null; then
+        warn "pi not found in PATH — skipping the Pi package stack"
+        info "Install Pi first, then re-run: ./setup.sh --agent pi --with-pi-packages"
+        return 0
+    fi
+
+    PI_INSTALL_OK=""
+    PI_INSTALL_FAIL=""
+
+    # Approved order — pins are hardcoded above and refreshed via `npm view`.
+    pi_run_step "gentle-engram@$PI_PKG_GENTLE_ENGRAM_VERSION" \
+        pi install "npm:gentle-engram@$PI_PKG_GENTLE_ENGRAM_VERSION"
+    pi_run_step "pi-mcp-adapter@$PI_PKG_MCP_ADAPTER_VERSION" \
+        pi install "npm:pi-mcp-adapter@$PI_PKG_MCP_ADAPTER_VERSION"
+    pi_run_step "pi-engram init (gentle-engram@$PI_PKG_GENTLE_ENGRAM_VERSION)" \
+        npm exec --yes --package "gentle-engram@$PI_PKG_GENTLE_ENGRAM_VERSION" -- pi-engram init
+    pi_run_step "pi-subagents-j0k3r@$PI_PKG_SUBAGENTS_VERSION" \
+        pi install "npm:pi-subagents-j0k3r@$PI_PKG_SUBAGENTS_VERSION"
+    pi_run_step "@juicesharp/rpiv-ask-user-question@$PI_PKG_ASK_USER_VERSION" \
+        pi install "npm:@juicesharp/rpiv-ask-user-question@$PI_PKG_ASK_USER_VERSION"
+    pi_run_step "pi-web-access@$PI_PKG_WEB_ACCESS_VERSION" \
+        pi install "npm:pi-web-access@$PI_PKG_WEB_ACCESS_VERSION"
+    pi_run_step "@juicesharp/rpiv-todo@$PI_PKG_TODO_VERSION" \
+        pi install "npm:@juicesharp/rpiv-todo@$PI_PKG_TODO_VERSION"
+    pi_run_step "pi-btw@$PI_PKG_BTW_VERSION" \
+        pi install "npm:pi-btw@$PI_PKG_BTW_VERSION"
+
+    echo ""
+    if [ -n "$PI_INSTALL_OK" ]; then
+        info "Pi packages installed:"
+        printf '%b\n' "$PI_INSTALL_OK"
+    fi
+    if [ -n "$PI_INSTALL_FAIL" ]; then
+        warn "Pi packages that failed (setup continued anyway):"
+        printf '%b\n' "$PI_INSTALL_FAIL"
+    fi
+}
+
+# ============================================================================
 # Full Setup for One Agent
 # ============================================================================
 
@@ -684,6 +836,11 @@ setup_agent() {
         setup_opencode
     else
         setup_orchestrator "$prompt_path" "$example_file" "$agent"
+    fi
+
+    # N5: offer the Pi package stack only for the Pi target.
+    if [[ "$agent" == "pi" ]]; then
+        setup_pi_packages
     fi
 }
 
@@ -779,12 +936,15 @@ AGENT=""
 ALL=false
 NON_INTERACTIVE=false
 OPENCODE_MODE=""  # "", "single", or "multi"
+PI_PACKAGES=""    # "", "yes", or "no" — controls the N5 Pi package stack
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --agent)          AGENT="$2"; shift 2 ;;
         --all)            ALL=true; shift ;;
         --non-interactive) NON_INTERACTIVE=true; ALL=true; shift ;;
+        --with-pi-packages)    PI_PACKAGES="yes"; shift ;;
+        --without-pi-packages) PI_PACKAGES="no"; shift ;;
         --opencode-mode)
             if [[ "$2" == "single" || "$2" == "multi" ]]; then
                 OPENCODE_MODE="$2"; shift 2
@@ -796,11 +956,13 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: setup.sh [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --all               Auto-detect and install for all found agents"
-            echo "  --agent NAME        Install for a specific agent"
-            echo "  --opencode-mode M   OpenCode agent mode: 'single' or 'multi' (per-phase models)"
-            echo "  --non-interactive   No prompts (for external installers)"
-            echo "  -h, --help          Show this help"
+            echo "  --all                  Auto-detect and install for all found agents"
+            echo "  --agent NAME           Install for a specific agent"
+            echo "  --opencode-mode M      OpenCode agent mode: 'single' or 'multi' (per-phase models)"
+            echo "  --with-pi-packages     Install the Pi package stack (--agent pi, non-interactive)"
+            echo "  --without-pi-packages  Skip the Pi package stack (--agent pi, non-interactive)"
+            echo "  --non-interactive      No prompts (for external installers)"
+            echo "  -h, --help             Show this help"
             echo ""
             echo "Agents: claude-code, opencode, gemini-cli, cursor, vscode, codex, pi"
             exit 0

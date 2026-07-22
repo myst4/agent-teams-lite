@@ -211,6 +211,16 @@ exposes. "Full" means true sub-agents with isolated, fresh context windows.
 | Antigravity | Single-agent | Manual (see installation guide) |
 | Pi | Inline (skills load as instructions) | `setup.sh --agent pi` (global `~/.pi/agent/AGENTS.md`; see installation guide) |
 
+Two harness-specific extras land through the same setup command. On **Claude Code**,
+`setup.sh --agent claude-code` also installs all **17 native subagents** (the 9 SDD
+phases plus 8 review-layer agents — the 4R lenses, refuter, two Judgment Day judges,
+and the fix agent) into `~/.claude/agents/`, each with its own `tools`/`model`
+frontmatter (the read-only lenses are enforced read-only by that `tools` list). On
+**Pi**, `setup.sh --agent pi` can optionally install a curated, consent-gated stack of
+Pi runtime packages (persistent memory, MCP adapter, native subagents, ask-user, web
+access, todo, side-conversations) at pinned versions — it never installs the rival
+`gentle-pi` harness. Both are detailed in [docs/installation.md](docs/installation.md).
+
 ## Documentation
 
 - [docs/installation.md](docs/installation.md) — per-harness install, paths, and orchestrator wiring.
