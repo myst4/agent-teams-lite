@@ -1,6 +1,6 @@
 # Hooks — from prose to mechanism
 
-Agent Teams Lite is a set of Markdown instructions. Most of its guarantees are
+Kurama is a set of Markdown instructions. Most of its guarantees are
 *prose*: "the orchestrator delegates, it does not edit code"; "never archive a
 change that failed verification". Prose depends on the model reading it, keeping it
 in context, and choosing to obey it. Under compaction, a long session, or an eager
@@ -26,12 +26,12 @@ example say it must hand code changes to sub-agents. The write guard makes that
 structural: a `PreToolUse` hook on `Edit`/`Write`/`MultiEdit` blocks the
 **main-thread** orchestrator from writing repository code **while an SDD cycle is
 active**, and only then. It exempts the paths the orchestrator legitimately writes
-— `.atl/` (harness state) and `openspec/` (SDD artifacts) — and it is invisible
+— `.kurama/` (harness state) and `openspec/` (SDD artifacts) — and it is invisible
 during ordinary non-SDD work, because it fires only when active-cycle state exists.
 
 "Active cycle" is detected from persisted state, not from the model's belief:
 an `openspec/changes/<name>/state.yaml` outside `archive/`, or a
-`.atl/sdd/<name>/state.md` without an `archive-report.md`. The moment a change is
+`.kurama/sdd/<name>/state.md` without an `archive-report.md`. The moment a change is
 archived, the guard steps aside.
 
 ### 2. Archive gate (no PASS, no archive)
@@ -51,7 +51,7 @@ then editing a file before archiving — the stale `PASS` would sail through. Th
 now closed by binding the receipt to the tree. `sdd-verify` (Step 6b) stamps a
 `Tree-Hash` in the report's **Content Binding** section: the hash of the reviewed tree,
 computed over a *throwaway* git index (`GIT_INDEX_FILE` points at a temp file, so the
-real index is never touched) with the `openspec/` artifact store and `.atl/` harness
+real index is never touched) with the `openspec/` artifact store and `.kurama/` harness
 state excluded. Step 0 of `sdd-archive` — and the `archive-gate.sh` hook — recompute
 that hash with the **identical** procedure and refuse the archive when it no longer
 matches: the tree changed after verification, so the receipt is **STALE** and
@@ -64,7 +64,7 @@ carries a `Tree-Hash` on a git checkout; a legacy report without the line, or a 
 tree, falls back to the verdict gate alone.
 
 The documented escape hatch is preserved exactly as the skill defines it:
-`ATL_ARCHIVE_OVERRIDE=1` opens the gate — **both** the verify-PASS check and the
+`KURAMA_ARCHIVE_OVERRIDE=1` opens the gate — **both** the verify-PASS check and the
 content-binding (stale-receipt) check — but the override reason must still be recorded
 verbatim in the archive report. The script opens the gate; it never records the
 justification for you.
@@ -74,7 +74,7 @@ justification for you.
 The hooks do **not** replace the skills — they backstop two of them. The skill text
 still explains *why* to delegate and *why* verification gates the archive; the hook
 guarantees the *what* even if the *why* fell out of context. This mirrors how the
-harness treats persistence: the contract is prose, but `.atl/` fallback files are
+harness treats persistence: the contract is prose, but `.kurama/` fallback files are
 the mechanism that survives compaction.
 
 Keep the split in mind when reasoning about coverage:
@@ -113,7 +113,7 @@ by human/CI review — which is the fallback the whole framework is designed aro
   Sub-agents run in their own context; blocking their writes would defeat the point
   (they are how code gets written). See
   [`examples/claude-code/hooks/README.md`](../examples/claude-code/hooks/README.md)
-  for the `ATL_GUARD_BYPASS` / `ATL_ORCHESTRATOR_GUARD` escape hatches if a build
+  for the `KURAMA_GUARD_BYPASS` / `KURAMA_ORCHESTRATOR_GUARD` escape hatches if a build
   propagates the hook into sub-agent contexts.
 - **Verdict parsing plus tree binding, not re-verification.** The archive gate now
   verifies that the *tree* is unchanged since verification (the content binding above),

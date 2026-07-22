@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ============================================================================
-# Agent Teams Lite — Install Script Tests
+# Kurama — Install Script Tests
 # Run: bash scripts/install_test.sh
 # ============================================================================
 
@@ -599,7 +599,7 @@ test_setup_unbalanced_marker_aborts() {
     mkdir -p "$HOME/.claude"
     local f="$HOME/.claude/CLAUDE.md"
     printf '%s\n' '# User config' \
-        '<!-- BEGIN:agent-teams-lite -->' \
+        '<!-- BEGIN:kurama -->' \
         'stale orchestrator body' \
         'CRITICAL USER CONTENT AFTER BEGIN' > "$f"
     cp "$f" "$TEST_TMPDIR/claude.orig"
@@ -626,9 +626,9 @@ test_setup_balanced_marker_updates_and_backs_up() {
     mkdir -p "$HOME/.claude"
     local f="$HOME/.claude/CLAUDE.md"
     printf '%s\n' '# Header' \
-        '<!-- BEGIN:agent-teams-lite -->' \
+        '<!-- BEGIN:kurama -->' \
         'old body' \
-        '<!-- END:agent-teams-lite -->' \
+        '<!-- END:kurama -->' \
         '# trailing user notes' > "$f"
 
     bash "$SETUP_SCRIPT" --agent claude-code > /dev/null 2>&1 || {
@@ -644,8 +644,8 @@ test_setup_balanced_marker_updates_and_backs_up() {
     fi
 
     local begin end
-    begin=$(grep -c 'BEGIN:agent-teams-lite' "$f")
-    end=$(grep -c 'END:agent-teams-lite' "$f")
+    begin=$(grep -c 'BEGIN:kurama' "$f")
+    end=$(grep -c 'END:kurama' "$f")
     assert_eq "1" "$begin" "Exactly one BEGIN marker after update" || return 1
     assert_eq "1" "$end" "Exactly one END marker after update" || return 1
 
@@ -684,7 +684,7 @@ test_setup_writes_install_manifest() {
     # setup.sh installs must leave the same receipt install.sh does, so uninstall
     # works on the recommended (setup.sh) install path.
     bash "$SETUP_SCRIPT" --agent claude-code > /dev/null 2>&1
-    local manifest="$HOME/.claude/skills/.atl-install-manifest.json"
+    local manifest="$HOME/.claude/skills/.kurama-install-manifest.json"
     assert_file_exists "$manifest" || return 1
     grep -q '"version"' "$manifest" || { echo "setup.sh install manifest missing version field"; return 1; }
     grep -q '"files"' "$manifest" || { echo "setup.sh install manifest missing files array"; return 1; }
@@ -705,7 +705,7 @@ test_setup_uninstall_round_trip() {
         echo "sdd-apply should have been removed by uninstall after a setup.sh install"
         return 1
     fi
-    if [ -f "$HOME/.claude/skills/.atl-install-manifest.json" ]; then
+    if [ -f "$HOME/.claude/skills/.kurama-install-manifest.json" ]; then
         echo "install manifest should have been removed by uninstall"
         return 1
     fi
@@ -789,7 +789,7 @@ test_manifest_exists_and_parses() {
 test_version_flag() {
     local output
     output=$(bash "$INSTALL_SCRIPT" --version 2>&1)
-    echo "$output" | grep -q "agent-teams-lite" || { echo "Version output missing 'agent-teams-lite'"; return 1; }
+    echo "$output" | grep -q "kurama" || { echo "Version output missing 'kurama'"; return 1; }
     echo "$output" | grep -qE '[0-9]+\.[0-9]+\.[0-9]+' || { echo "Version output missing a semver-like version"; return 1; }
 }
 
@@ -800,7 +800,7 @@ test_version_exits_zero() {
 
 test_install_writes_install_manifest() {
     bash "$INSTALL_SCRIPT" --agent claude-code > /dev/null 2>&1
-    local manifest="$HOME/.claude/skills/.atl-install-manifest.json"
+    local manifest="$HOME/.claude/skills/.kurama-install-manifest.json"
     assert_file_exists "$manifest" || return 1
     grep -q '"version"' "$manifest" || { echo "install manifest missing version field"; return 1; }
     grep -q '"files"' "$manifest" || { echo "install manifest missing files array"; return 1; }
@@ -909,7 +909,7 @@ test_with_tdd_uninstall_round_trip() {
         echo "tdd should have been removed by uninstall"
         return 1
     fi
-    if [ -f "$HOME/.claude/skills/.atl-install-manifest.json" ]; then
+    if [ -f "$HOME/.claude/skills/.kurama-install-manifest.json" ]; then
         echo "install manifest should have been removed by uninstall"
         return 1
     fi
@@ -1034,7 +1034,7 @@ test_uninstall_round_trip() {
         echo "sdd-apply should have been removed by uninstall"
         return 1
     fi
-    if [ -f "$HOME/.claude/skills/.atl-install-manifest.json" ]; then
+    if [ -f "$HOME/.claude/skills/.kurama-install-manifest.json" ]; then
         echo "install manifest should have been removed by uninstall"
         return 1
     fi
@@ -1049,14 +1049,14 @@ test_uninstall_dry_run_preserves_files() {
     bash "$UNINSTALL_SCRIPT" --agent claude-code --dry-run > /dev/null 2>&1
     # Nothing should be deleted on a dry run.
     assert_all_skills_installed "$HOME/.claude/skills" || return 1
-    assert_file_exists "$HOME/.claude/skills/.atl-install-manifest.json" || return 1
+    assert_file_exists "$HOME/.claude/skills/.kurama-install-manifest.json" || return 1
     return 0
 }
 
 test_uninstall_custom_path() {
     local custom="$TEST_TMPDIR/custom-skills"
     bash "$INSTALL_SCRIPT" --agent custom --path "$custom" > /dev/null 2>&1
-    assert_file_exists "$custom/.atl-install-manifest.json" || return 1
+    assert_file_exists "$custom/.kurama-install-manifest.json" || return 1
     bash "$UNINSTALL_SCRIPT" --path "$custom" > /dev/null 2>&1
     if [ -d "$custom/sdd-apply" ]; then
         echo "sdd-apply should have been removed from custom path"
@@ -1152,7 +1152,7 @@ test_plugin_json_version_matches_version_file() {
 
 echo ""
 echo -e "${CYAN}${BOLD}╔══════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}${BOLD}║    Agent Teams Lite — Install Tests      ║${NC}"
+echo -e "${CYAN}${BOLD}║    Kurama — Install Tests      ║${NC}"
 echo -e "${CYAN}${BOLD}╚══════════════════════════════════════════╝${NC}"
 echo ""
 

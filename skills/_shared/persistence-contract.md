@@ -17,7 +17,7 @@ The orchestrator passes `artifact_store.mode` with one of: `engram | openspec | 
 
 Default resolution (when orchestrator does not explicitly set a mode):
 1. If Engram is available → use `engram`
-2. If Engram is unavailable → use `engram` degraded to the **`.atl/sdd/` filesystem fallback** (see *Harness State & Filesystem Fallback* below), and warn the user. **Never silently degrade to `none`** — that would drop cross-session recovery entirely.
+2. If Engram is unavailable → use `engram` degraded to the **`.kurama/sdd/` filesystem fallback** (see *Harness State & Filesystem Fallback* below), and warn the user. **Never silently degrade to `none`** — that would drop cross-session recovery entirely.
 
 `openspec` and `hybrid` are NEVER used by default — only when explicitly passed.
 
@@ -25,7 +25,7 @@ Default resolution (when orchestrator does not explicitly set a mode):
 
 ### Engram unavailable while `engram`/`hybrid` is selected
 
-If `engram` (default or explicit) is selected but Engram is unavailable at cycle start, degrade to the `.atl/sdd/` filesystem fallback with a user warning — read and write SDD artifacts as markdown under `.atl/sdd/{change-name}/` instead of Engram. This preserves compaction recovery without creating `openspec/` in the repo. For `hybrid`, an unavailable Engram is non-fatal because the filesystem is authoritative (see *Hybrid Mode*): continue file-only and note the missing mirror as a risk.
+If `engram` (default or explicit) is selected but Engram is unavailable at cycle start, degrade to the `.kurama/sdd/` filesystem fallback with a user warning — read and write SDD artifacts as markdown under `.kurama/sdd/{change-name}/` instead of Engram. This preserves compaction recovery without creating `openspec/` in the repo. For `hybrid`, an unavailable Engram is non-fatal because the filesystem is authoritative (see *Hybrid Mode*): continue file-only and note the missing mirror as a risk.
 
 ## Behavior Per Mode
 
@@ -38,7 +38,7 @@ If `engram` (default or explicit) is selected but Engram is unavailable at cycle
 
 The `Read from` / `Write to` / `SDD artifact files` columns describe where **SDD artifacts** go — never the implementation code, which `sdd-apply` always writes to the project.
 
-When `engram` is degraded to the `.atl/sdd/` filesystem fallback (Engram unavailable), read and write SDD artifacts as markdown under `.atl/sdd/{change-name}/` — the harness state directory, not repo-tracked `openspec/`.
+When `engram` is degraded to the `.kurama/sdd/` filesystem fallback (Engram unavailable), read and write SDD artifacts as markdown under `.kurama/sdd/{change-name}/` — the harness state directory, not repo-tracked `openspec/`.
 
 ### Hybrid Mode
 
@@ -60,17 +60,17 @@ Token cost warning: hybrid consumes MORE tokens per operation. Use only when you
 
 ## Harness State & Filesystem Fallback
 
-`.atl/` is the **harness state directory** — gitignored infrastructure, not repo-tracked SDD artifacts. Consistent with the `skill-registry` skill (which writes `.atl/skill-registry.md` in every mode), the persistence-mode gates that suppress `openspec/` never apply to `.atl/`. It holds:
+`.kurama/` is the **harness state directory** — gitignored infrastructure, not repo-tracked SDD artifacts. Consistent with the `skill-registry` skill (which writes `.kurama/skill-registry.md` in every mode), the persistence-mode gates that suppress `openspec/` never apply to `.kurama/`. It holds:
 
-- `.atl/skill-registry.md` — the compact skill registry (written in every mode)
-- `.atl/sdd/{change-name}/{artifact-type}.md` — the SDD artifact **fallback store**
+- `.kurama/skill-registry.md` — the compact skill registry (written in every mode)
+- `.kurama/sdd/{change-name}/{artifact-type}.md` — the SDD artifact **fallback store**
 
-The `.atl/sdd/` store is used when Engram is the intended backend but is unavailable or fails:
+The `.kurama/sdd/` store is used when Engram is the intended backend but is unavailable or fails:
 
 - Engram unavailable at cycle start (degraded `engram` mode) → read/write all SDD artifacts here.
 - A single `mem_save` fails mid-cycle → write that artifact here (see *Write Failure Recovery*).
 
-Filenames mirror the Engram naming: the title/topic_key `sdd/{change-name}/{artifact-type}` maps to `.atl/sdd/{change-name}/{artifact-type}.md`, so recovery and downstream retrieval use the same identifiers regardless of backend.
+Filenames mirror the Engram naming: the title/topic_key `sdd/{change-name}/{artifact-type}` maps to `.kurama/sdd/{change-name}/{artifact-type}.md`, so recovery and downstream retrieval use the same identifiers regardless of backend.
 
 ## Write Failure Recovery
 
@@ -78,16 +78,16 @@ When a persistence write fails, recover instead of aborting:
 
 **`engram` mode** — if `mem_save` fails:
 1. **Retry once.**
-2. If it still fails, **write the full artifact** to `.atl/sdd/{change-name}/{artifact-type}.md` and continue the phase.
-3. **Report the fallback** in the return envelope `risks`, naming the artifact and the `.atl/sdd/` path so the orchestrator and downstream phases can locate it.
+2. If it still fails, **write the full artifact** to `.kurama/sdd/{change-name}/{artifact-type}.md` and continue the phase.
+3. **Report the fallback** in the return envelope `risks`, naming the artifact and the `.kurama/sdd/` path so the orchestrator and downstream phases can locate it.
 
-**`hybrid` mode** — the filesystem file is authoritative and is written first, so the artifact is already durable. If the Engram mirror write fails, retry once, then leave the mirror missing and record the reconciliation gap in `risks`; the next reader falls back to the file (file-first reads). No `.atl/sdd/` copy is needed because the `openspec/` file already holds the content.
+**`hybrid` mode** — the filesystem file is authoritative and is written first, so the artifact is already durable. If the Engram mirror write fails, retry once, then leave the mirror missing and record the reconciliation gap in `risks`; the next reader falls back to the file (file-first reads). No `.kurama/sdd/` copy is needed because the `openspec/` file already holds the content.
 
 **`openspec` mode** — a filesystem write failure is a genuine blocker (there is no second store). Return `status: blocked` naming the failing path.
 
 **`none` mode** — nothing is persisted; there is no write to fail.
 
-A persistence failure never silently drops an artifact and never halts the cycle in `engram`/`hybrid` — the artifact stays recoverable from `.atl/sdd/` or the authoritative file. The old "the pipeline BREAKS" framing is retired: missing persistence is a reported, recoverable risk, not a fatal dead end.
+A persistence failure never silently drops an artifact and never halts the cycle in `engram`/`hybrid` — the artifact stays recoverable from `.kurama/sdd/` or the authoritative file. The old "the pipeline BREAKS" framing is retired: missing persistence is a reported, recoverable risk, not a fatal dead end.
 
 ## State Persistence (Orchestrator)
 
@@ -96,23 +96,23 @@ The orchestrator persists DAG state after each phase transition to enable SDD re
 | Mode | Persist State | Recover State |
 |------|--------------|---------------|
 | `engram` | `mem_save(topic_key: "sdd/{change-name}/state")` | `mem_search("sdd/{change-name}/state")` → `mem_get_observation(id)` |
-| `engram` (degraded) | Write `.atl/sdd/{change-name}/state.md` | Read `.atl/sdd/{change-name}/state.md` |
+| `engram` (degraded) | Write `.kurama/sdd/{change-name}/state.md` | Read `.kurama/sdd/{change-name}/state.md` |
 | `openspec` | Write `openspec/changes/{change-name}/state.yaml` | Read `openspec/changes/{change-name}/state.yaml` |
 | `hybrid` | Both: write `state.yaml` AND `mem_save` | Filesystem first (authoritative); Engram mirror as fallback |
 | `none` | Not possible — warn user | Not possible |
 
-The `engram (degraded)` row applies whenever Engram is unavailable at cycle start (see *Engram Availability Check*): state survives compaction via `.atl/sdd/` instead of being lost to `none`.
+The `engram (degraded)` row applies whenever Engram is unavailable at cycle start (see *Engram Availability Check*): state survives compaction via `.kurama/sdd/` instead of being lost to `none`.
 
 ## Common Rules
 
 > **Every rule below governs SDD ARTIFACTS only** (exploration, proposal, spec, design, tasks, apply-progress, verify-report, archive-report, state) — never the implementation code `sdd-apply` writes. In these rules, "project files" means *SDD artifact files*. Implementation code (source, tests, required configuration) is **ALWAYS written to the project in every mode**, including `engram` and `none`; the mode only decides where the SDD artifacts live.
 
 - `none` → do NOT create or modify any SDD artifact files; return SDD artifact content inline only (implementation code is still written to the project as normal)
-- `engram` → do NOT write SDD artifact files into the repo; persist SDD artifacts to Engram and return observation IDs. If Engram is unavailable or a save fails, fall back to `.atl/sdd/` (see *Harness State & Filesystem Fallback* and *Write Failure Recovery*). Implementation code is still written to the project as normal
+- `engram` → do NOT write SDD artifact files into the repo; persist SDD artifacts to Engram and return observation IDs. If Engram is unavailable or a save fails, fall back to `.kurama/sdd/` (see *Harness State & Filesystem Fallback* and *Write Failure Recovery*). Implementation code is still written to the project as normal
 - `openspec` → write SDD artifact files ONLY to paths defined in `openspec-convention.md`
 - `hybrid` → persist SDD artifacts to BOTH filesystem (authoritative) AND Engram (mirror); follow both conventions
 - NEVER force `openspec/` creation unless orchestrator explicitly passed `openspec` or `hybrid`
-- If no mode is resolvable, follow *Mode Resolution*: `engram` when Engram is available, else the `.atl/sdd/` fallback — never silently drop to `none`, and never write `openspec/` unless `openspec`/`hybrid` was explicitly passed
+- If no mode is resolvable, follow *Mode Resolution*: `engram` when Engram is available, else the `.kurama/sdd/` fallback — never silently drop to `none`, and never write `openspec/` unless `openspec`/`hybrid` was explicitly passed
 
 ## Sub-Agent Context Rules
 
@@ -174,7 +174,7 @@ Artifact store mode: none
 Your upstream artifacts are provided inline in this prompt. Do NOT search Engram or read project files for them.
 ```
 
-**degraded `engram` (Engram unavailable):** read upstream artifacts from `.atl/sdd/{change-name}/{type}.md`.
+**degraded `engram` (Engram unavailable):** read upstream artifacts from `.kurama/sdd/{change-name}/{type}.md`.
 
 ### SDD persistence (phases that produce an artifact)
 
@@ -191,7 +191,7 @@ PERSISTENCE (engram): after completing your work, call:
     capture_prompt: false,
     content: "{your full artifact markdown}"
   )
-If mem_save fails, retry once; if it still fails, write the artifact to .atl/sdd/{change-name}/{artifact-type}.md
+If mem_save fails, retry once; if it still fails, write the artifact to .kurama/sdd/{change-name}/{artifact-type}.md
 and report the fallback path in your envelope risks. Do not return without persisting the artifact somewhere the
 next phase can read it.
 ```
@@ -223,7 +223,7 @@ files and do NOT call mem_save. (Implementation code is still written to the pro
 **degraded `engram` (Engram unavailable):**
 ```
 PERSISTENCE (engram fallback): Engram is unavailable this cycle. Write the artifact to
-.atl/sdd/{change-name}/{artifact-type}.md and report the path in your envelope artifacts.
+.kurama/sdd/{change-name}/{artifact-type}.md and report the path in your envelope artifacts.
 ```
 
 ## Skill Registry

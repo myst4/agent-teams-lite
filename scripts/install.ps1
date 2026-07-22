@@ -2,7 +2,7 @@
 
 <#
 .SYNOPSIS
-    Agent Teams Lite installer for Windows
+    Kurama installer for Windows
 .DESCRIPTION
     Copies SDD skills to your AI coding assistant's skill directory.
 .PARAMETER Agent
@@ -48,7 +48,7 @@ $VersionFile = Join-Path $RepoDir 'VERSION'
 
 # Per-target install manifest (records version + installed files so upgrades can
 # detect leftovers and an uninstall can remove exactly what was written).
-$InstallManifestName = '.atl-install-manifest.json'
+$InstallManifestName = '.kurama-install-manifest.json'
 
 $ToolPaths = @{
     'claude-code'       = Join-Path $env:USERPROFILE '.claude\skills'
@@ -69,7 +69,7 @@ $ToolPaths = @{
 function Write-Header {
     Write-Host ''
     Write-Host ([char]0x2554 + ([string][char]0x2550 * 42) + [char]0x2557) -ForegroundColor Cyan
-    Write-Host ([char]0x2551 + '      Agent Teams Lite - Installer        ' + [char]0x2551) -ForegroundColor Cyan
+    Write-Host ([char]0x2551 + '      Kurama - Installer        ' + [char]0x2551) -ForegroundColor Cyan
     Write-Host ([char]0x2551 + '   Spec-Driven Development for AI Agents  ' + [char]0x2551) -ForegroundColor Cyan
     Write-Host ([char]0x255A + ([string][char]0x2550 * 42) + [char]0x255D) -ForegroundColor Cyan
     Write-Host ''
@@ -133,7 +133,7 @@ function Show-Usage {
     Write-Host '  -Path DIR        Custom install path (use with -Agent custom)'
     Write-Host '  -With GROUP      Include an optional skill group (quality, review, optional, tdd)'
     Write-Host '  -Without GROUP   Exclude an optional skill group (quality, review, optional)'
-    Write-Host '  -Version         Print the Agent Teams Lite version and exit'
+    Write-Host '  -Version         Print the Kurama version and exit'
     Write-Host '  -Help            Show this help'
     Write-Host ''
     Write-Host 'Agents: claude-code, opencode, gemini-cli, codex, vscode, antigravity, cursor, project-local, all-global'
@@ -195,7 +195,7 @@ function Write-InstallManifest {
         [string[]]$Files
     )
     $obj = [ordered]@{
-        name    = 'agent-teams-lite'
+        name    = 'kurama'
         version = (Get-AtlVersion)
         tool    = $ToolName
         files   = @($Files)
@@ -476,7 +476,7 @@ try {
     }
 
     if ($Version) {
-        Write-Host "agent-teams-lite $(Get-AtlVersion)"
+        Write-Host "kurama $(Get-AtlVersion)"
         exit 0
     }
 

@@ -1,6 +1,6 @@
 # Skill Resolver — Universal Protocol
 
-Any agent that **delegates work to sub-agents** MUST follow this protocol to resolve and inject relevant skills. This applies to the ATL orchestrator, judgment-day, pr-review, and ANY future skill or workflow that launches sub-agents.
+Any agent that **delegates work to sub-agents** MUST follow this protocol to resolve and inject relevant skills. This applies to the Kurama orchestrator, judgment-day, pr-review, and ANY future skill or workflow that launches sub-agents.
 
 ## Why This Exists
 
@@ -19,7 +19,7 @@ The registry carries TWO surfaces per skill: an **index** (`Trigger | Skill | Pa
 Resolution order:
 1. Already cached from earlier in this session? → use cache
 2. `mem_search(query: "skill-registry", project: "{project}")` → `mem_get_observation(id)` for full content
-3. Fallback: read `.atl/skill-registry.md` from the project root if it exists
+3. Fallback: read `.kurama/skill-registry.md` from the project root if it exists
 4. No registry found? → proceed without skills (but warn the user: "No skill registry found — sub-agents will work without project-specific standards. Run `skill-registry` to fix this.")
 
 ### Step 2: Match Relevant Skills
@@ -130,7 +130,7 @@ This prevents silent degradation where the orchestrator forgets skills after com
 
 ## Integration Points
 
-- **ATL Orchestrator**: follows this protocol for ALL delegations (SDD and non-SDD)
+- **Kurama Orchestrator**: follows this protocol for ALL delegations (SDD and non-SDD)
 - **judgment-day**: follows this protocol before launching Judge A, Judge B, and Fix Agent
 - **pr-review**: already has internal skill loading — should migrate to this protocol for consistency
 - **Any future skill that delegates**: MUST reference this protocol

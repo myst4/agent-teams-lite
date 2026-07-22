@@ -4,7 +4,7 @@
     "sdd-orchestrator": {
       "model": "<your-provider/your-model>",
       "mode": "primary",
-      "description": "Agent Teams Orchestrator (single mode) - the only agent; runs each SDD phase as a subtask",
+      "description": "Kurama Orchestrator (single mode) - the only agent; runs each SDD phase as a subtask",
       "prompt": "{file:./AGENTS.md}",
       "permission": {
         "task": {

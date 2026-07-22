@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ============================================================================
-# Agent Teams Lite — Full Setup Script
+# Kurama — Full Setup Script
 # Detects installed agents, copies skills, and configures orchestrator prompts.
 # Idempotent: safe to run multiple times (uses markers to avoid duplication).
 # Cross-platform: macOS, Linux, Windows (Git Bash / WSL)
@@ -23,7 +23,7 @@ VERSION_FILE="$REPO_DIR/VERSION"
 
 # Name of the per-target install manifest — identical to install.sh so
 # scripts/uninstall.sh can remove exactly what a setup.sh install wrote.
-INSTALL_MANIFEST_NAME=".atl-install-manifest.json"
+INSTALL_MANIFEST_NAME=".kurama-install-manifest.json"
 
 # setup.sh installs the DEFAULT skill set (no --with/--without flags). These are
 # the default-on groups from skills/manifest.json; the opt-in `tdd` group is only
@@ -31,8 +31,8 @@ INSTALL_MANIFEST_NAME=".atl-install-manifest.json"
 # tested with a case glob.
 SETUP_ACTIVE_GROUPS=" sdd-core quality review optional "
 
-MARKER_BEGIN="<!-- BEGIN:agent-teams-lite -->"
-MARKER_END="<!-- END:agent-teams-lite -->"
+MARKER_BEGIN="<!-- BEGIN:kurama -->"
+MARKER_END="<!-- END:kurama -->"
 
 # gentle-ai-installer markers (detect to avoid duplication)
 GAI_MARKER_BEGIN="<!-- gentle-ai:sdd-orchestrator -->"
@@ -44,7 +44,7 @@ UNIQUE_NAMES_GENERATOR_VERSION="4.7.1"
 
 # Content headings that indicate orchestrator is already present
 ORCHESTRATOR_HEADINGS=(
-    "## Agent Teams Orchestrator"
+    "## Kurama Orchestrator"
     "## Spec-Driven Development (SDD) Orchestrator"
     "## Spec-Driven Development (SDD)"
 )
@@ -163,14 +163,14 @@ get_prompt_path() {
         claude-code)  echo "$home/.claude/CLAUDE.md" ;;
         opencode)     echo "$home/.config/opencode/AGENTS.md" ;;
         gemini-cli)   echo "$home/.gemini/GEMINI.md" ;;
-        cursor)       echo "$home/.cursor/rules/agent-teams-lite.mdc" ;;
+        cursor)       echo "$home/.cursor/rules/kurama.mdc" ;;
         vscode)
             if [[ "$OS" == "windows" ]]; then
-                echo "${APPDATA:-$home/AppData/Roaming}/Code/User/prompts/agent-teams-lite.instructions.md"
+                echo "${APPDATA:-$home/AppData/Roaming}/Code/User/prompts/kurama.instructions.md"
             elif [[ "$OS" == "macos" ]]; then
-                echo "$home/Library/Application Support/Code/User/prompts/agent-teams-lite.instructions.md"
+                echo "$home/Library/Application Support/Code/User/prompts/kurama.instructions.md"
             else
-                echo "$home/.config/Code/User/prompts/agent-teams-lite.instructions.md"
+                echo "$home/.config/Code/User/prompts/kurama.instructions.md"
             fi
             ;;
         codex)        echo "$home/.codex/agents.md" ;;
@@ -260,7 +260,7 @@ write_install_manifest() {
     make_writable "$manifest_path"
     {
         printf '{\n'
-        printf '  "name": "agent-teams-lite",\n'
+        printf '  "name": "kurama",\n'
         printf '  "version": "%s",\n' "$version"
         printf '  "tool": "%s",\n' "$tool_name"
         printf '  "files": [\n'
@@ -416,14 +416,14 @@ setup_orchestrator() {
     fi
 
     local content
-    # Strip preamble (human-readable header) — only inject from "## Agent Teams" onward
-    content=$(sed -n '/^## Agent Teams/,$p' "$example_file")
+    # Strip preamble (human-readable header) — only inject from "## Kurama" onward
+    content=$(sed -n '/^## Kurama/,$p' "$example_file")
 
     if [ -f "$prompt_path" ]; then
         # Guard against data loss: an unbalanced marker pair (BEGIN without END
         # from a manual edit, merge conflict, or external tool) would make the awk
         # rewrite below truncate everything after BEGIN. Refuse to touch the file.
-        validate_markers "$prompt_path" "$MARKER_BEGIN" "$MARKER_END" "agent-teams-lite"
+        validate_markers "$prompt_path" "$MARKER_BEGIN" "$MARKER_END" "kurama"
         validate_markers "$prompt_path" "$GAI_MARKER_BEGIN" "$GAI_MARKER_END" "gentle-ai"
 
         # The injected content is multi-line. Pass it to awk via a file read with
@@ -764,7 +764,7 @@ setup_colors
 
 echo ""
 echo -e "${CYAN}${BOLD}╔══════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}${BOLD}║    Agent Teams Lite — Full Setup          ║${NC}"
+echo -e "${CYAN}${BOLD}║    Kurama — Full Setup          ║${NC}"
 echo -e "${CYAN}${BOLD}║   Detect • Install • Configure            ║${NC}"
 echo -e "${CYAN}${BOLD}╚══════════════════════════════════════════╝${NC}"
 

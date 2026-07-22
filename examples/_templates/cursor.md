@@ -8,11 +8,11 @@ No Model Assignments block for this harness, so that token renders empty.
 
 <!-- @@HEADER@@ -->
 ---
-description: Agent Teams Lite — SDD orchestrator rule (coordinator, delegate-only)
+description: Kurama — SDD orchestrator rule (coordinator, delegate-only)
 globs:
 alwaysApply: true
 ---
-# Agent Teams Lite — Orchestrator for Cursor
+# Kurama — Orchestrator for Cursor
 
 Add this to `.cursor/rules/` in your project (modern Cursor rules format; replaces the legacy `.cursorrules`).
 

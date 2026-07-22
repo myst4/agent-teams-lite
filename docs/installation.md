@@ -71,13 +71,13 @@ The example is intentionally lean to avoid token bloat in always-loaded system p
 skills (and, going forward, agents/hooks) with versioning and one-command
 install/update instead of a manual `cp -r`. This repo ships
 [`.claude-plugin/plugin.json`](../.claude-plugin/plugin.json) (name
-`agent-teams-lite`, version read from the repo's `VERSION` file, skills path)
+`kurama`, version read from the repo's `VERSION` file, skills path)
 and a single-entry [`.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json)
 example:
 
 ```
 /plugin marketplace add Gentleman-Programming/agent-teams-lite
-/plugin install agent-teams-lite
+/plugin install kurama
 ```
 
 This is an alternative to `setup.sh`/`install.sh`, not a replacement — both
@@ -261,9 +261,9 @@ cp -r skills/_shared skills/sdd-* skills/skill-registry skills/judgment-day skil
 Create a VS Code `.instructions.md` file in the User prompts folder with the orchestrator from [`examples/vscode/copilot-instructions.md`](../examples/vscode/copilot-instructions.md).
 
 Prompt file paths:
-- macOS: `~/Library/Application Support/Code/User/prompts/agent-teams-lite.instructions.md`
-- Linux: `~/.config/Code/User/prompts/agent-teams-lite.instructions.md`
-- Windows: `%APPDATA%\Code\User\prompts\agent-teams-lite.instructions.md`
+- macOS: `~/Library/Application Support/Code/User/prompts/kurama.instructions.md`
+- Linux: `~/.config/Code/User/prompts/kurama.instructions.md`
+- Windows: `%APPDATA%\Code\User\prompts\kurama.instructions.md`
 
 </details>
 
@@ -305,7 +305,7 @@ Open Antigravity and type `/sdd-init` in the agent panel.
 ## Cursor
 
 > **Automatic:** `./scripts/setup.sh --agent cursor` copies the skills and
-> writes a global rule to `~/.cursor/rules/agent-teams-lite.mdc`, sourced
+> writes a global rule to `~/.cursor/rules/kurama.mdc`, sourced
 > verbatim from the generated
 > `examples/cursor/.cursor/rules/sdd-orchestrator.mdc` (frontmatter-scoped
 > `.mdc` format; the legacy `.cursorrules` file has been removed).
@@ -331,7 +331,7 @@ shipped. Copy
 [`examples/cursor/.cursor/rules/sdd-orchestrator.mdc`](../examples/cursor/.cursor/rules/sdd-orchestrator.mdc)
 into your project's `.cursor/rules/` directory for a per-project rule, or into
 `~/.cursor/rules/` for a global one (`setup.sh` does the global copy for you,
-verbatim, as `agent-teams-lite.mdc`).
+verbatim, as `kurama.mdc`).
 
 </details>
 

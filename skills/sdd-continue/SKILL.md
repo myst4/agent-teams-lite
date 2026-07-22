@@ -31,7 +31,7 @@ Recover the DAG state for the change using the **Recovery Rule** and **State Per
 `skills/_shared/persistence-contract.md`:
 
 - `engram` → `mem_search("sdd/{change-name}/state")` → `mem_get_observation(id)`
-- `engram` (degraded, Engram unavailable) → read `.atl/sdd/{change-name}/state.md`
+- `engram` (degraded, Engram unavailable) → read `.kurama/sdd/{change-name}/state.md`
 - `openspec` → read `openspec/changes/{change-name}/state.yaml`
 - `hybrid` → filesystem `state.yaml` first (authoritative), Engram mirror as fallback
 - `none` → state was not persisted; explain to the user that the change cannot be recovered

@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # ============================================================================
-# Agent Teams Lite — Uninstall Script
+# Kurama — Uninstall Script
 # Removes exactly what install.sh recorded in each target's install manifest
-# (.atl-install-manifest.json). User-created skills are never touched.
+# (.kurama-install-manifest.json). User-created skills are never touched.
 # Cross-platform: macOS, Linux, Windows (Git Bash / WSL). Bash 3.2 compatible.
 #
 # Usage:
@@ -14,7 +14,7 @@ set -euo pipefail
 #   ./uninstall.sh --agent codex --dry-run  # Show what would be removed
 # ============================================================================
 
-INSTALL_MANIFEST_NAME=".atl-install-manifest.json"
+INSTALL_MANIFEST_NAME=".kurama-install-manifest.json"
 
 # Agents install.sh can write skills for (project-local is opt-in via --agent).
 ALL_AGENTS="claude-code opencode gemini-cli codex vscode antigravity cursor"

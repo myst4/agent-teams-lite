@@ -1,10 +1,10 @@
 # OpenSpec File Convention (shared across all SDD skills)
 
-> **Not the upstream OpenSpec CLI.** This file defines ATL's own project-local
+> **Not the upstream OpenSpec CLI.** This file defines Kurama's own project-local
 > convention for `openspec/` — a different config schema and directory layout
 > than the upstream [Fission-AI/OpenSpec](https://github.com/Fission-AI/OpenSpec)
 > tool (no `config.yaml`/`state.yaml` there; different commands, different
-> archive layout). The two are not interchangeable, and ATL does not depend on
+> archive layout). The two are not interchangeable, and Kurama does not depend on
 > or invoke the upstream CLI. The `openspec` mode name is kept for continuity
 > with existing installs, not for compatibility with the upstream project.
 

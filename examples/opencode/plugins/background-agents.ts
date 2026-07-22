@@ -1038,10 +1038,10 @@ Use delegation_read(id) to retrieve the full result.`
    * Log debug messages (opt-in).
    */
   async debugLog(msg: string): Promise<void> {
-    // Debug logging is opt-in: set ATL_BG_DEBUG=1 to write a rotation-free
+    // Debug logging is opt-in: set KURAMA_BG_DEBUG=1 to write a rotation-free
     // trace log to baseDir. Disabled by default so the plugin never appends
     // to disk on every operation.
-    if (!process.env.ATL_BG_DEBUG) return
+    if (!process.env.KURAMA_BG_DEBUG) return
 
     const timestamp = new Date().toISOString()
     const line = `${timestamp}: ${msg}\n`

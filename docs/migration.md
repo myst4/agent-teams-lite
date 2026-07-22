@@ -85,10 +85,10 @@ were never merged anywhere. If you need that history, re-derive it from each
 change's archived `spec` artifact (`sdd/{change-name}/spec`) rather than
 expecting a pre-existing main spec.
 
-### `.atl/sdd/` fallback store (new)
+### `.kurama/sdd/` fallback store (new)
 
-`.atl/` — already used for `.atl/skill-registry.md` — gains a second role:
-`.atl/sdd/{change-name}/` is the filesystem fallback for SDD artifacts when
+`.kurama/` — already used for `.kurama/skill-registry.md` — gains a second role:
+`.kurama/sdd/{change-name}/` is the filesystem fallback for SDD artifacts when
 Engram is unreachable at the start of a cycle (the orchestrator checks with
 one cheap Engram call and degrades the whole cycle to this fallback, with a
 warning), or when a single `mem_save` fails mid-cycle in `engram` mode (one
@@ -205,7 +205,7 @@ overwritten the next time the build runs, and now also caught by CI.
 ### New packaging artifacts
 
 - `.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` — install
-  ATL as a Claude Code plugin (`/plugin marketplace add ...`) instead of
+  Kurama as a Claude Code plugin (`/plugin marketplace add ...`) instead of
   copying files by hand; the plugin version is read from the repo's
   `VERSION` file.
 - `gemini-extension.json` — a Gemini CLI extension manifest referencing
@@ -239,7 +239,7 @@ meta-skills are part of that set).
 `examples/claude-code/hooks/` ships an optional `hooks.json` plus portable
 bash scripts implementing two deterministic gates: a `PreToolUse` guard that
 blocks the orchestrator's own `Edit`/`Write` to repo files while an SDD cycle
-is active (delegation must still happen; `.atl/` and `openspec/` artifact
+is active (delegation must still happen; `.kurama/` and `openspec/` artifact
 paths are exempt), and an archive gate that mechanically refuses
 `sdd-archive` when the persisted state lacks a verify `PASS` — mirroring
 `sdd-archive`'s own Step 0 check, but enforced deterministically instead of
@@ -323,10 +323,10 @@ block, and only `BLOCKER`/`CRITICAL` gate. See
 
 `sdd-verify` now records a **Content Binding** section in its report: a reviewed-tree
 hash computed over a throwaway git index (`GIT_INDEX_FILE=$(mktemp)` + `git add -A` +
-`git write-tree`, excluding `openspec/` and `.atl/`) — the real index is never touched —
+`git write-tree`, excluding `openspec/` and `.kurama/`) — the real index is never touched —
 plus the changed-file list. `sdd-archive` Step 0 and the optional
 `examples/claude-code/hooks/archive-gate.sh` **re-derive the hash and block on mismatch**
-("verify receipt stale — re-run sdd-verify"). `ATL_ARCHIVE_OVERRIDE=1` still bypasses the
+("verify receipt stale — re-run sdd-verify"). `KURAMA_ARCHIVE_OVERRIDE=1` still bypasses the
 gate and is recorded in the archive report. This closes the previously declared gap where
 the archive gate trusted the verdict without verifying the tree (see
 [docs/hooks.md](hooks.md)). In a non-git project the binding degrades gracefully to
@@ -369,7 +369,7 @@ drop completed-task history across resumed cycles. Documented in
 
 ### Pi is the 8th supported harness
 
-ATL adds **Pi** as an eighth harness. Its orchestrator is generated from
+Kurama adds **Pi** as an eighth harness. Its orchestrator is generated from
 `examples/_templates/core.md` + a new `examples/_templates/pi.md` overlay into
 `examples/pi/AGENTS.md` (project-root `AGENTS.md` convention; global alternative
 `~/.pi/agent/APPEND_SYSTEM.md`). Pure Markdown, no `gentle-pi` npm dependency; Pi routes
@@ -383,7 +383,7 @@ per [docs/installation.md](installation.md).
 A dependency-light (`bash 3.2` / POSIX, no `jq`) status inspector: `scripts/sdd-status.sh
 [project]` lists active SDD cycles with store, last/next phase (derived from the canonical
 DAG), visible settings, and task progress; `--json` emits a parseable object. Reads
-`openspec/` and the `.atl/sdd/` fallback from disk. Pure-engram cycles with nothing on
+`openspec/` and the `.kurama/sdd/` fallback from disk. Pure-engram cycles with nothing on
 disk are intentionally not queryable offline.
 
 **Action required**: none — it is a read-only diagnostic.

@@ -1,6 +1,6 @@
-# Contributing to Agent Teams Lite
+# Contributing to Kurama
 
-Thanks for contributing. Agent Teams Lite enforces a strict **issue-first workflow** — every change starts with an approved issue.
+Thanks for contributing. Kurama enforces a strict **issue-first workflow** — every change starts with an approved issue.
 
 ---
 

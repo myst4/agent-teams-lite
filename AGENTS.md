@@ -1,4 +1,4 @@
-# Agent Teams Lite — Agent Skills Index
+# Kurama — Agent Skills Index
 
 When working on this project, load the relevant skill(s) BEFORE writing any code.
 

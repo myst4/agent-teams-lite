@@ -1,6 +1,6 @@
 # TDD Module (optional)
 
-Test-Driven Development in Agent Teams Lite is an **optional, opt-in module**. It
+Test-Driven Development in Kurama is an **optional, opt-in module**. It
 is OFF by default. When enabled for a project, it hooks into three SDD phases —
 `sdd-tasks` plans the cycle, `sdd-apply` executes it, and `sdd-verify` audits it —
 so RED → GREEN → REFACTOR is planned, run, and checked together, or not at all.

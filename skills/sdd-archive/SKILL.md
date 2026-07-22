@@ -65,7 +65,7 @@ index is never touched) and compare:
 ```bash
 # From the repository root. GIT_INDEX_FILE is a temp file, so the working index is untouched.
 tmp_index="$(mktemp)"; rm -f "$tmp_index"   # git rejects a zero-byte index — let it create a fresh one
-GIT_INDEX_FILE="$tmp_index" git add -A -- . ':(exclude)openspec' ':(exclude).atl'
+GIT_INDEX_FILE="$tmp_index" git add -A -- . ':(exclude)openspec' ':(exclude).kurama'
 live_tree="$(GIT_INDEX_FILE="$tmp_index" git write-tree)"
 rm -f "$tmp_index"
 ```
@@ -75,7 +75,7 @@ rm -f "$tmp_index"
   orchestrator stamped `Reviewed-Tree` there) or from the value the orchestrator passed inline.
 - If `live_tree` ≠ the recorded hash → the code changed after verification → return
   `status: blocked`, `executive_summary: "verify receipt stale — re-run sdd-verify"`,
-  `next_recommended: sdd-verify`. Do NOT archive. (The `openspec/` and `.atl/` exclusions mean
+  `next_recommended: sdd-verify`. Do NOT archive. (The `openspec/` and `.kurama/` exclusions mean
   writing this report or moving the change folder does NOT trip the check — only a real code
   change does.)
 - If the recorded hash is `n/a (not a git checkout)` or absent (legacy report) → skip this
@@ -176,7 +176,7 @@ Follow **Section C** from `skills/_shared/sdd-phase-common.md`.
 - type: `architecture`
 - capture_prompt: `false` — the archive report is an automated SDD artifact; never capture the user prompt (see `skills/_shared/engram-convention.md`)
 
-Per E2, if `mem_save` of the archive report or a merged main spec fails, retry once; if it still fails, write a filesystem fallback copy under `.atl/sdd/{change-name}/` and report it as a concern in `risks`. Do NOT silently drop the merge or the report.
+Per E2, if `mem_save` of the archive report or a merged main spec fails, retry once; if it still fails, write a filesystem fallback copy under `.kurama/sdd/{change-name}/` and report it as a concern in `risks`. Do NOT silently drop the merge or the report.
 
 ### Step 6: Return Summary
 
@@ -214,7 +214,7 @@ Ready for the next change.
 ## Rules
 
 - ALWAYS run Step 0 first: NEVER archive when the verify report is missing or its verdict is `FAIL` / has unresolved CRITICAL issues, UNLESS an explicit user-authorized override is passed — and when it is, record the override verbatim in the archive report
-- ALWAYS revalidate the **content binding** in Step 0 when the report carries a `Tree-Hash`: recompute the live reviewed-tree hash (throwaway index, excluding `openspec/` and `.atl/` — byte-identical to sdd-verify Step 6b and archive-gate.sh) and BLOCK on a mismatch with `"verify receipt stale — re-run sdd-verify"`. Only the same explicit override bypasses it; a legacy report with no `Tree-Hash` falls back to the verdict gate alone
+- ALWAYS revalidate the **content binding** in Step 0 when the report carries a `Tree-Hash`: recompute the live reviewed-tree hash (throwaway index, excluding `openspec/` and `.kurama/` — byte-identical to sdd-verify Step 6b and archive-gate.sh) and BLOCK on a mismatch with `"verify receipt stale — re-run sdd-verify"`. Only the same explicit override bypasses it; a legacy report with no `Tree-Hash` falls back to the verdict gate alone
 - ALWAYS sync delta specs BEFORE moving to archive
 - In engram mode, main specs ARE the `sdd-specs/{project}/{domain}` artifacts — merge deltas there exactly as openspec merges into `openspec/specs/{domain}/spec.md`; never skip the merge
 - When merging into existing specs, PRESERVE requirements not mentioned in the delta

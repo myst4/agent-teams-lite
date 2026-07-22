@@ -2,7 +2,7 @@
 set -uo pipefail
 
 # ============================================================================
-# Agent Teams Lite — Skills Structural Linter
+# Kurama — Skills Structural Linter
 # Run: bash scripts/validate_skills.sh
 #
 # A dependency-light, portable (POSIX/bash 3.2, BSD + GNU userland) linter that
@@ -411,7 +411,7 @@ check_packaging_manifests() {
 # Main
 # ----------------------------------------------------------------------------
 
-printf '== Agent Teams Lite — Skills Linter ==\n'
+printf '== Kurama — Skills Linter ==\n'
 printf 'Repo: %s\n' "$REPO_DIR"
 
 check_skill_frontmatter

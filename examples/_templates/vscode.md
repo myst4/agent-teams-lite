@@ -5,7 +5,7 @@ No Model Assignments block for this harness, so that token renders empty.
 -->
 
 <!-- @@HEADER@@ -->
-# Agent Teams Lite — Orchestrator for VS Code Copilot
+# Kurama — Orchestrator for VS Code Copilot
 
 Add this to `.github/copilot-instructions.md` in your project root.
 

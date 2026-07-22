@@ -1,7 +1,7 @@
 ---
 name: issue-creation
 description: >
-  Issue creation workflow for Agent Teams Lite following the issue-first enforcement system.
+  Issue creation workflow for Kurama following the issue-first enforcement system.
   Trigger: When creating a GitHub issue, reporting a bug, or requesting a feature.
 license: Apache-2.0
 metadata:

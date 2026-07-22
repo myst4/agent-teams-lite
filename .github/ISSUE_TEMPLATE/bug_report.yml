@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a bug in Agent Teams Lite
+description: Report a bug in Kurama
 labels: ["bug", "status:needs-review"]
 body:
   - type: markdown
@@ -7,7 +7,7 @@ body:
       value: |
         # 🐛 Bug Report
 
-        Thanks for helping improve Agent Teams Lite! Please fill in all required fields so we can investigate quickly.
+        Thanks for helping improve Kurama! Please fill in all required fields so we can investigate quickly.
 
         > **How this works:**
         > 1. You submit this issue → it gets `status:needs-review` automatically

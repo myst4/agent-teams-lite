@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ============================================================================
-# Agent Teams Lite — Build orchestrator examples from templates
+# Kurama — Build orchestrator examples from templates
 #
 # Assembles examples/_templates/core.md (the shared orchestrator body) with one
 # per-harness overlay (examples/_templates/<harness>.md, which holds ONLY that
@@ -84,7 +84,7 @@ build_one() {
     return 1
   fi
 
-  tmp="$(mktemp -d "${TMPDIR:-/tmp}/atl-build.XXXXXX")"
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/kurama-build.XXXXXX")"
 
   # 1. Extract every token block into $tmp/<TOKEN>.
   for tok in $TOKENS; do

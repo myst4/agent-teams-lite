@@ -6,7 +6,7 @@ description: >
   teatest, or adding Go test coverage.
 license: Apache-2.0
 metadata:
-  author: agent-teams-lite
+  author: kurama
   version: "1.1"
 ---
 

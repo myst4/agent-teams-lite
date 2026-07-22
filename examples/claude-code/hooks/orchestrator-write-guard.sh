@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Agent Teams Lite — Orchestrator Write Guard (PreToolUse hook)
+# Kurama — Orchestrator Write Guard (PreToolUse hook)
 #
 # Enforces the orchestrator's delegate-only contract as a MECHANISM instead of
 # prose. While an SDD cycle is active, it blocks the ORCHESTRATOR (main thread)
 # from writing repository code directly with Edit / Write / MultiEdit — the
 # orchestrator must delegate that work to a sub-agent. SDD artifact / harness
-# paths (.atl/, openspec/) are always exempt so state and artifacts can still be
+# paths (.kurama/, openspec/) are always exempt so state and artifacts can still be
 # persisted. When no SDD cycle is active, every write is allowed.
 #
 # Contract (Claude Code PreToolUse):
@@ -17,7 +17,7 @@
 # Sub-agents launched via Task run in their OWN context; this guard is designed
 # to fire on the main-thread orchestrator, which is why delegated writers (e.g.
 # sdd-apply) are the intended way to produce code. See README.md for the
-# main-thread limitation and the ATL_GUARD_BYPASS escape hatch.
+# main-thread limitation and the KURAMA_GUARD_BYPASS escape hatch.
 #
 # Bash 3.2 / BSD portable. shellcheck-clean. No jq dependency (used if present).
 # ============================================================================
@@ -26,12 +26,12 @@ set -u
 
 # --- escape hatches ---------------------------------------------------------
 # Disable the guard entirely for this session/project.
-if [ "${ATL_ORCHESTRATOR_GUARD:-1}" = "0" ]; then
+if [ "${KURAMA_ORCHESTRATOR_GUARD:-1}" = "0" ]; then
   exit 0
 fi
 # Per-call bypass — for a context that legitimately writes code (e.g. a
 # delegated writer) but still triggers this hook on a given Claude Code build.
-if [ "${ATL_GUARD_BYPASS:-0}" = "1" ]; then
+if [ "${KURAMA_GUARD_BYPASS:-0}" = "1" ]; then
   exit 0
 fi
 
@@ -80,7 +80,7 @@ esac
 # --- is an SDD cycle active? ------------------------------------------------
 # openspec mode        : an active change dir (NOT under changes/archive/) that
 #                        still holds a state.yaml.
-# engram-fallback mode : a .atl/sdd/<change>/ dir with state.md and no
+# engram-fallback mode : a .kurama/sdd/<change>/ dir with state.md and no
 #                        archive-report.md (archiving writes the report).
 active_cycle_exists() {
   base="$1"
@@ -96,8 +96,8 @@ active_cycle_exists() {
     done
   fi
 
-  if [ -d "$base/.atl/sdd" ]; then
-    for d in "$base"/.atl/sdd/*/; do
+  if [ -d "$base/.kurama/sdd" ]; then
+    for d in "$base"/.kurama/sdd/*/; do
       [ -d "$d" ] || continue
       if [ -f "${d}state.md" ] && [ ! -f "${d}archive-report.md" ]; then
         return 0
@@ -113,7 +113,7 @@ active_cycle_exists "$root" || exit 0
 
 # --- path exemptions --------------------------------------------------------
 case "$abs_path" in
-  "$root"/.atl/*)     exit 0 ;;  # harness state directory — always writable
+  "$root"/.kurama/*)     exit 0 ;;  # harness state directory — always writable
   "$root"/openspec/*) exit 0 ;;  # SDD artifacts — always writable
   "$root"/*)          : ;;       # inside the repo — this is the guarded case
   *)                  exit 0 ;;  # outside the repo — not our concern
@@ -121,8 +121,8 @@ esac
 
 # --- block: an active cycle + a direct write to repo code -------------------
 printf '%s\n' \
-  "BLOCKED by agent-teams-lite orchestrator-write-guard: an SDD cycle is active and \"$file_path\" is repository code." \
+  "BLOCKED by kurama orchestrator-write-guard: an SDD cycle is active and \"$file_path\" is repository code." \
   "The orchestrator is a COORDINATOR — it must DELEGATE code changes to a sub-agent (e.g. launch sdd-apply via the Task tool) instead of editing files directly." \
-  "Exempt paths you may still write: .atl/ (harness state) and openspec/ (SDD artifacts)." \
-  "To override for this call only, set ATL_GUARD_BYPASS=1; to disable the guard, set ATL_ORCHESTRATOR_GUARD=0." >&2
+  "Exempt paths you may still write: .kurama/ (harness state) and openspec/ (SDD artifacts)." \
+  "To override for this call only, set KURAMA_GUARD_BYPASS=1; to disable the guard, set KURAMA_ORCHESTRATOR_GUARD=0." >&2
 exit 2

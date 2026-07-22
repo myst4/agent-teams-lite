@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Agent Teams Lite — Archive Gate (verify-PASS gate for sdd-archive)
+# Kurama — Archive Gate (verify-PASS gate for sdd-archive)
 #
 # Mechanical mirror of sdd-archive Step 0: NEVER archive a change whose
 # verification report is missing, whose verdict is FAIL, or whose Content Binding
@@ -28,7 +28,7 @@
 #          other Task/Skill call is allowed (exit 0).
 #
 # Override (escape hatch, mirrors sdd-archive Step 0's user-authorized override):
-#   ATL_ARCHIVE_OVERRIDE=1  bypasses BOTH the verdict gate and the content-binding
+#   KURAMA_ARCHIVE_OVERRIDE=1  bypasses BOTH the verdict gate and the content-binding
 #   check. The override REASON must still be recorded verbatim in the archive report
 #   by sdd-archive — this script only opens the gate; it does not record anything.
 #
@@ -53,9 +53,9 @@ if [ -n "$payload" ]; then
 fi
 
 # --- override ---------------------------------------------------------------
-if [ "${ATL_ARCHIVE_OVERRIDE:-0}" = "1" ]; then
+if [ "${KURAMA_ARCHIVE_OVERRIDE:-0}" = "1" ]; then
   printf '%s\n' \
-    "archive-gate: ATL_ARCHIVE_OVERRIDE=1 — bypassing the verify-PASS gate and the content-binding check." \
+    "archive-gate: KURAMA_ARCHIVE_OVERRIDE=1 — bypassing the verify-PASS gate and the content-binding check." \
     "sdd-archive Step 0 requires the override REASON to be recorded verbatim in the archive report and its return envelope risks." >&2
   exit 0
 fi
@@ -97,7 +97,7 @@ mtime() {
 # change (tracked, untracked, deletions) into a THROWAWAY index and write the
 # resulting tree object. GIT_INDEX_FILE points at a temp file, so the real index is
 # NEVER touched. Two exclusions keep the hash stable across the verify->archive
-# window: the SDD artifact store (openspec/) and harness state (.atl/) legitimately
+# window: the SDD artifact store (openspec/) and harness state (.kurama/) legitimately
 # churn — sdd-verify writes its own report, sdd-archive moves the change folder and
 # writes an archive report — so they are excluded from the pathspec, leaving only the
 # actual code+config bound. `git add -A` also honors .gitignore, so a clean checkout
@@ -115,7 +115,7 @@ compute_tree_hash() {
   # git rejects a zero-byte index file ("index file smaller than expected"), so
   # delete the file mktemp created and let git initialize a fresh empty index here.
   rm -f "$th_index"
-  GIT_INDEX_FILE="$th_index" git -C "$th_root" add -A -- . ':(exclude)openspec' ':(exclude).atl' >/dev/null 2>&1
+  GIT_INDEX_FILE="$th_index" git -C "$th_root" add -A -- . ':(exclude)openspec' ':(exclude).kurama' >/dev/null 2>&1
   th_hash="$(GIT_INDEX_FILE="$th_index" git -C "$th_root" write-tree 2>/dev/null)"
   rm -f "$th_index"
   [ -n "$th_hash" ] || return 1
@@ -129,8 +129,8 @@ project_root="${CLAUDE_PROJECT_DIR:-}"
 root="${project_root%/}"
 
 # --- resolve the change name ------------------------------------------------
-# Priority: explicit arg -> ATL_CHANGE env -> newest active change auto-detect.
-change="${1:-${ATL_CHANGE:-}}"
+# Priority: explicit arg -> KURAMA_CHANGE env -> newest active change auto-detect.
+change="${1:-${KURAMA_CHANGE:-}}"
 
 if [ -z "$change" ]; then
   newest_mtime=0
@@ -156,8 +156,8 @@ if [ -z "$change" ]; then
     done
   fi
 
-  if [ -d "$root/.atl/sdd" ]; then
-    for d in "$root"/.atl/sdd/*/; do
+  if [ -d "$root/.kurama/sdd" ]; then
+    for d in "$root"/.kurama/sdd/*/; do
       [ -d "$d" ] || continue
       [ -f "${d}archive-report.md" ] && continue
       marker=""
@@ -180,16 +180,16 @@ report=""
 if [ -n "$change" ]; then
   if [ -f "$root/openspec/changes/$change/verify-report.md" ]; then
     report="$root/openspec/changes/$change/verify-report.md"
-  elif [ -f "$root/.atl/sdd/$change/verify-report.md" ]; then
-    report="$root/.atl/sdd/$change/verify-report.md"
+  elif [ -f "$root/.kurama/sdd/$change/verify-report.md" ]; then
+    report="$root/.kurama/sdd/$change/verify-report.md"
   fi
 fi
 
 if [ -z "$report" ]; then
   printf '%s\n' \
-    "BLOCKED by agent-teams-lite archive-gate: no verify-report found for change '${change:-<unknown>}'." \
+    "BLOCKED by kurama archive-gate: no verify-report found for change '${change:-<unknown>}'." \
     "sdd-archive Step 0 refuses to archive without a verification report recording a PASS verdict." \
-    "Run sdd-verify first, or set ATL_ARCHIVE_OVERRIDE=1 with a reason recorded in the archive report." >&2
+    "Run sdd-verify first, or set KURAMA_ARCHIVE_OVERRIDE=1 with a reason recorded in the archive report." >&2
   exit 2
 fi
 
@@ -207,12 +207,12 @@ if [ -n "$recorded_tree" ]; then
   live_tree="$(compute_tree_hash "$git_root")"
   if [ -n "$live_tree" ] && [ "$live_tree" != "$recorded_tree" ]; then
     printf '%s\n' \
-      "BLOCKED by agent-teams-lite archive-gate: verify receipt stale — re-run sdd-verify." \
+      "BLOCKED by kurama archive-gate: verify receipt stale — re-run sdd-verify." \
       "The working tree changed after sdd-verify bound its Content Binding receipt for '$change'." \
       "  recorded Tree-Hash: $recorded_tree" \
       "  live Tree-Hash:     $live_tree" \
       "Report: $report" \
-      "Re-run sdd-verify to re-bind the receipt to the current tree, or set ATL_ARCHIVE_OVERRIDE=1 with a reason recorded in the archive report." >&2
+      "Re-run sdd-verify to re-bind the receipt to the current tree, or set KURAMA_ARCHIVE_OVERRIDE=1 with a reason recorded in the archive report." >&2
     exit 2
   fi
 fi
@@ -244,7 +244,7 @@ case "$verdict_uc" in
 esac
 
 printf '%s\n' \
-  "BLOCKED by agent-teams-lite archive-gate: cannot archive '$change' — $reason." \
+  "BLOCKED by kurama archive-gate: cannot archive '$change' — $reason." \
   "Report: $report" \
-  "Fix the change and re-run sdd-verify to a PASS / PASS WITH WARNINGS verdict, or set ATL_ARCHIVE_OVERRIDE=1 with a reason recorded in the archive report." >&2
+  "Fix the change and re-run sdd-verify to a PASS / PASS WITH WARNINGS verdict, or set KURAMA_ARCHIVE_OVERRIDE=1 with a reason recorded in the archive report." >&2
 exit 2

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Agent Teams Lite — SDD Cycle Status
+# Kurama — SDD Cycle Status
 #
 # Reports the state of every ACTIVE SDD cycle in a project: for each change it
 # prints the last completed phase, the next phase recommended by the canonical
@@ -13,14 +13,14 @@
 # State is read from whichever artifact store left files on disk:
 #   - openspec / hybrid : openspec/changes/<change>/state.yaml (+ artifacts)
 #                         plus openspec/config.yaml for settings
-#   - engram (degraded / filesystem fallback) : .atl/sdd/<change>/state.md
+#   - engram (degraded / filesystem fallback) : .kurama/sdd/<change>/state.md
 #                         (+ artifacts). This is the store engram uses when
 #                         Engram is unavailable or a mem_save failed.
 #
 # LIMITATION — pure engram is NOT queryable offline. When a cycle's artifacts
 # live only in Engram (Engram was available, nothing was written to disk), there
 # is no engram CLI to query, so this script cannot see it. It reports on the
-# on-disk openspec/ and .atl/sdd/ stores only. A cycle absent from both prints
+# on-disk openspec/ and .kurama/sdd/ stores only. A cycle absent from both prints
 # as "no active SDD cycles".
 #
 # Usage:
@@ -59,7 +59,7 @@ Options:
   -h, --help     show this help and exit
 
 Reads on-disk state from openspec/changes/<change>/state.yaml (openspec/hybrid)
-and .atl/sdd/<change>/state.md (engram filesystem fallback). Pure-engram cycles
+and .kurama/sdd/<change>/state.md (engram filesystem fallback). Pure-engram cycles
 with nothing written to disk are not queryable offline (no engram CLI).
 
 Exit codes: 0 success (incl. no cycles), 1 bad path, 2 usage error.
@@ -134,8 +134,8 @@ os_has_artifacts() {
   [ -d "${_d}specs" ]           && return 0
   return 1
 }
-# .atl/sdd change dir holds any recognizable artifact?
-atl_has_artifacts() {
+# .kurama/sdd change dir holds any recognizable artifact?
+kurama_has_artifacts() {
   _d="$1"
   [ -f "${_d}state.md" ]           && return 0
   [ -f "${_d}explore.md" ]         && return 0
@@ -159,7 +159,7 @@ dir_has_spec() {
 
 # --- per-change processing --------------------------------------------------
 # Appends a text block to TEXT_BUF and a JSON object to JSON_BUF, sets FOUND=1.
-# Args: name  store_label  flavor(openspec|atl)  base_dir(trailing /)  state_file
+# Args: name  store_label  flavor(openspec|kurama)  base_dir(trailing /)  state_file
 process_change() {
   name="$1"
   store="$2"
@@ -348,7 +348,7 @@ TEXT_BUF=""
 JSON_BUF=""
 
 os_changes="$root/openspec/changes"
-atl_root="$root/.atl/sdd"
+kurama_root="$root/.kurama/sdd"
 
 # openspec (and hybrid) changes first — they are authoritative when a change
 # exists in both stores.
@@ -362,26 +362,26 @@ if [ -d "$os_changes" ]; then
     [ -f "${d}archive-report.md" ] && continue
     name="$(basename "$d")"
     store="openspec"
-    if [ -d "$atl_root/$name" ] \
-      && atl_has_artifacts "$atl_root/$name/" \
-      && [ ! -f "$atl_root/$name/archive-report.md" ]; then
+    if [ -d "$kurama_root/$name" ] \
+      && kurama_has_artifacts "$kurama_root/$name/" \
+      && [ ! -f "$kurama_root/$name/archive-report.md" ]; then
       store="hybrid"
     fi
     process_change "$name" "$store" "openspec" "$d" "${d}state.yaml"
   done
 fi
 
-# .atl/sdd changes not already covered by an openspec entry (degraded engram).
-if [ -d "$atl_root" ]; then
-  for d in "$atl_root"/*/; do
+# .kurama/sdd changes not already covered by an openspec entry (degraded engram).
+if [ -d "$kurama_root" ]; then
+  for d in "$kurama_root"/*/; do
     [ -d "$d" ] || continue
     [ -f "${d}archive-report.md" ] && continue
-    atl_has_artifacts "$d" || continue
+    kurama_has_artifacts "$d" || continue
     name="$(basename "$d")"
     if [ -d "$os_changes/$name" ] && os_has_artifacts "$os_changes/$name/"; then
       continue
     fi
-    process_change "$name" "engram (fallback)" "atl" "$d" "${d}state.md"
+    process_change "$name" "engram (fallback)" "kurama" "$d" "${d}state.md"
   done
 fi
 
@@ -393,7 +393,7 @@ fi
 
 if [ "$FOUND" = 0 ]; then
   printf 'No active SDD cycles under %s\n' "$root"
-  printf '(reads openspec/ and .atl/sdd/ fallback state; pure-engram cycles are not queryable offline — no engram CLI)\n'
+  printf '(reads openspec/ and .kurama/sdd/ fallback state; pure-engram cycles are not queryable offline — no engram CLI)\n'
   exit 0
 fi
 

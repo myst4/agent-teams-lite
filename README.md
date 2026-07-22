@@ -1,6 +1,6 @@
 <div align="center">
 
-# Agent Teams Lite
+# Kurama
 
 **A lightweight, multi-harness Spec-Driven Development framework for AI coding agents.**
 
@@ -12,7 +12,7 @@
 
 ## What it is
 
-Agent Teams Lite (ATL) turns any capable AI coding assistant into a disciplined
+Kurama turns any capable AI coding assistant into a disciplined
 **Spec-Driven Development (SDD)** team. It ships as **24 portable Markdown skills**
 (23 installed by default, plus the opt-in `tdd` module)
 (plus a set of shared convention files) and a thin *delegate-only orchestrator*
@@ -31,7 +31,7 @@ compile — copy the skills, wire the orchestrator prompt, and run `/sdd-init`.
 Modern coding agents share one hard limit: **every turn reprocesses the full
 conversation history**. Reading files, running greps, and confirming edits inline
 pollutes the context permanently, which forces lossy compaction, which triggers
-re-reads, which grows the context again. ATL breaks that flywheel with two ideas:
+re-reads, which grows the context again. Kurama breaks that flywheel with two ideas:
 
 1. **Spec-first pipeline.** Work flows through an explicit DAG of phases —
    `explore → propose → spec ∥ design → tasks → apply → verify → archive` —
@@ -56,7 +56,7 @@ queue or peer-to-peer messaging you have to operate.
 
 ```bash
 git clone https://github.com/Gentleman-Programming/agent-teams-lite.git
-cd agent-teams-lite
+cd kurama
 ```
 
 **Recommended — one step (skills + orchestrator).** `setup.sh` detects your
@@ -221,7 +221,7 @@ automated PR checks.
 
 ## Relationship with gentle-ai
 
-Agent Teams Lite is **actively maintained** as the standalone, lightweight
+Kurama is **actively maintained** as the standalone, lightweight
 multi-harness SDD framework — the pure-Markdown, zero-dependency way to install
 these skills into any of the seven supported agents.
 

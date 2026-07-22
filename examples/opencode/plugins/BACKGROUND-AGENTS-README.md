@@ -92,16 +92,16 @@ Add `delegate`, `delegation_list`, and `delegation_read` to every agent that sho
 ### Step 4: Restart OpenCode
 
 OpenCode loads the plugin automatically. Debug logging is **opt-in**: set
-`ATL_BG_DEBUG=1` before launching OpenCode to trace delegation activity to disk.
+`KURAMA_BG_DEBUG=1` before launching OpenCode to trace delegation activity to disk.
 
 ```bash
-ATL_BG_DEBUG=1 opencode
+KURAMA_BG_DEBUG=1 opencode
 # then verify the trace log was written:
 cat ~/.local/share/opencode/delegations/*/background-agents-debug.log
 # Should show: "BackgroundAgents initialized with delegation system"
 ```
 
-Without `ATL_BG_DEBUG`, the plugin runs normally but writes no debug log.
+Without `KURAMA_BG_DEBUG`, the plugin runs normally but writes no debug log.
 
 ## Differences from Original
 
@@ -139,7 +139,7 @@ The `DELEGATION_RULES` injected into the system prompt now reflect that any agen
 
 Exported as `BackgroundAgents` (named + default) to match the local plugin naming convention used by `engram.ts` → `Engram`.
 
-### 6. Hardening for Agent Teams Lite
+### 6. Hardening for Kurama
 
 Beyond the upstream port, this copy applies several fixes:
 
@@ -148,7 +148,7 @@ Beyond the upstream port, this copy applies several fixes:
 - **Session-scoped listing.** `delegation_list` returns only delegations belonging to the calling session tree; previously the in-memory map leaked every concurrent session's delegations into every listing.
 - **Bounded memory.** Terminal delegations are evicted from memory once more than 50 accumulate (results remain on disk), so the map can't grow without limit during a long-running process.
 - **Dynamic agent guidance.** The `delegate` tool's `agent` parameter description is generated from the agents actually configured in your `opencode.json`, instead of naming upstream agents (`explore`, `researcher`, `scribe`) that don't exist in this setup.
-- **Opt-in debug logging** via `ATL_BG_DEBUG` (see Step 4), instead of appending to disk on every operation.
+- **Opt-in debug logging** via `KURAMA_BG_DEBUG` (see Step 4), instead of appending to disk on every operation.
 - **Timer safety.** `generateMetadata` uses the shared `withTimeout` helper (which clears its timer) instead of a bare `Promise.race`/`setTimeout`.
 
 ## Plugin Architecture
@@ -210,4 +210,4 @@ Navigate background sessions in OpenCode's TUI:
 
 - Original plugin: [kdcokenny/opencode-background-agents](https://github.com/kdcokenny/opencode-background-agents) by [@kdcokenny](https://github.com/kdcokenny) (MIT License)
 - Based on [oh-my-opencode](https://github.com/code-yeongyu/oh-my-opencode) by [@code-yeongyu](https://github.com/code-yeongyu) (MIT License)
-- Adapted for Agent Teams Lite by [@alanbuscaglia](https://github.com/alanbuscaglia)
+- Adapted for Kurama by [@alanbuscaglia](https://github.com/alanbuscaglia)

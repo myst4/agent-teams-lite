@@ -1,6 +1,6 @@
 # Persistence Modes
 
-Agent Teams Lite supports multiple storage backends for **SDD artifacts**
+Kurama supports multiple storage backends for **SDD artifacts**
 (exploration, proposal, spec, design, tasks, apply-progress, verify-report,
 archive-report, state, and main specs). This never restricts implementation
 code — `sdd-apply` always writes source, tests, and required configuration to
@@ -21,17 +21,17 @@ The orchestrator MUST check Engram availability by attempting one cheap Engram
 call at the start of the cycle — it never assumes:
 
 1. Engram reachable → default resolves to `engram`.
-2. Engram unreachable → default **degrades to the `.atl/sdd/` filesystem
+2. Engram unreachable → default **degrades to the `.kurama/sdd/` filesystem
    fallback**, with an explicit warning to the user. It never degrades
    silently to `none`.
 3. `openspec` and `hybrid` are NEVER chosen automatically — only when the user
    or orchestrator explicitly requests them.
-4. `none` is reached only by explicit choice, or when the `.atl/sdd/` fallback
+4. `none` is reached only by explicit choice, or when the `.kurama/sdd/` fallback
    itself is unavailable too.
 
 A separate rule covers a `mem_save` that fails mid-cycle, as opposed to Engram
 being unreachable at cycle start: one retry, then a fallback file written under
-`.atl/sdd/{change-name}/`, reported as a concern in the phase's return
+`.kurama/sdd/{change-name}/`, reported as a concern in the phase's return
 envelope. A single failed save no longer breaks the pipeline.
 
 ## Where pipeline settings are configured
@@ -87,21 +87,21 @@ sdd-specs/{project}/{domain}`. `sdd-archive` merges delta specs into these
 artifacts instead of skipping the merge, and `sdd-spec` reads them as the
 baseline when starting a new change.
 
-## `.atl/` — harness state directory
+## `.kurama/` — harness state directory
 
-`.atl/` is written in every mode, including `none` — it is harness
+`.kurama/` is written in every mode, including `none` — it is harness
 infrastructure, not an SDD project artifact:
 
-- `.atl/skill-registry.md` — the scanned skill + convention registry (see
+- `.kurama/skill-registry.md` — the scanned skill + convention registry (see
   [docs/sub-agents.md](sub-agents.md)).
-- `.atl/sdd/{change-name}/` — the Engram fallback store, used when Engram is
+- `.kurama/sdd/{change-name}/` — the Engram fallback store, used when Engram is
   unreachable at cycle start (whole-cycle degradation, see above) or when a
   mid-cycle `mem_save` fails after one retry (single-artifact fallback write,
   reported as a concern in the phase's return envelope).
 
 ## OpenSpec File Structure
 
-> **Not the upstream OpenSpec CLI.** This is ATL's own file convention (see
+> **Not the upstream OpenSpec CLI.** This is Kurama's own file convention (see
 > [openspec-convention.md](../skills/_shared/openspec-convention.md)) — a
 > different schema, not interchangeable with the
 > [Fission-AI/OpenSpec](https://github.com/Fission-AI/OpenSpec) tool; the

@@ -2,7 +2,7 @@
 
 ## 1. Executive Summary
 
-The orchestrator+sub-agent model in `agent-teams-lite` trades a **fixed overhead per sub-agent** (11,329–12,545 tokens) for **context isolation**: work done by sub-agents disappears from the orchestrator's context when they finish. Three independent analyses measured real file sizes from the codebase. Six optimizations were implemented, reducing overhead ~38% per SDD pipeline. For tasks touching 8+ files, delegation wins by 13,000+ tokens. For large features, the margin exceeds 100,000 tokens.
+The orchestrator+sub-agent model in `kurama` trades a **fixed overhead per sub-agent** (11,329–12,545 tokens) for **context isolation**: work done by sub-agents disappears from the orchestrator's context when they finish. Three independent analyses measured real file sizes from the codebase. Six optimizations were implemented, reducing overhead ~38% per SDD pipeline. For tasks touching 8+ files, delegation wins by 13,000+ tokens. For large features, the margin exceeds 100,000 tokens.
 
 ---
 

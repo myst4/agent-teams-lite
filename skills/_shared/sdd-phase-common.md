@@ -28,7 +28,7 @@ Which specific upstream artifacts a phase treats as REQUIRED vs OPTIONAL is stat
 2. If no Project Standards block was provided, check for `SKILL: Load` instructions. If present, load those exact skill files.
 3. If neither was provided, search for the skill registry as a fallback:
    a. `mem_search(query: "skill-registry", project: "{project}")` — if found, `mem_get_observation(id)` for full content
-   b. Fallback: read `.atl/skill-registry.md` from the project root if it exists
+   b. Fallback: read `.kurama/skill-registry.md` from the project root if it exists
    c. From the registry's **Compact Rules** section, apply rules whose triggers match your current task.
 4. If no registry exists, proceed with your phase skill only.
 
@@ -82,7 +82,7 @@ mem_save(
 
 `topic_key` enables upserts — saving again updates, not duplicates.
 
-If `mem_save` fails, retry once; if it still fails, write the full artifact to the filesystem fallback at `.atl/sdd/{change-name}/{artifact-type}.md` and report the fallback path in `risks`. See `persistence-contract.md` → *Write Failure Recovery*. A failed save is never fatal — the artifact stays recoverable.
+If `mem_save` fails, retry once; if it still fails, write the full artifact to the filesystem fallback at `.kurama/sdd/{change-name}/{artifact-type}.md` and report the fallback path in `risks`. See `persistence-contract.md` → *Write Failure Recovery*. A failed save is never fatal — the artifact stays recoverable.
 
 ### OpenSpec mode
 
@@ -105,7 +105,7 @@ Every phase MUST return a structured envelope to the orchestrator:
 - `status`: `success`, `partial`, or `blocked`
 - `executive_summary`: 1-3 sentence summary of what was done (name the missing artifact here when `status: blocked`)
 - `detailed_report`: (optional) full phase output — this is where a phase's own "Return Summary" format lives; omit if already inline
-- `artifacts`: list of artifact keys/paths written (include any `.atl/sdd/` fallback path used)
+- `artifacts`: list of artifact keys/paths written (include any `.kurama/sdd/` fallback path used)
 - `next_recommended`: the next SDD phase to run, or "none"
 - `risks`: risks discovered, fallbacks used, or hybrid reconciliation notes; "None" if there are none
 - `skill_resolution`: how skills were loaded — `injected` (received Project Standards from orchestrator), `fallback-registry` (self-loaded from registry), `fallback-path` (loaded via SKILL: Load path), or `none` (no skills loaded). This field is REQUIRED in every envelope.

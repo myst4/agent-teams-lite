@@ -2,7 +2,7 @@
 
 <#
 .SYNOPSIS
-    Agent Teams Lite — Full Setup Script for Windows
+    Kurama — Full Setup Script for Windows
 .DESCRIPTION
     Detects installed agents, copies skills, and configures orchestrator prompts.
     Idempotent: safe to run multiple times (uses markers to avoid duplication).
@@ -47,8 +47,8 @@ $RepoDir = Split-Path -Parent $ScriptRoot
 $SkillsSrc = Join-Path $RepoDir 'skills'
 $ExamplesDir = Join-Path $RepoDir 'examples'
 
-$MarkerBegin = '<!-- BEGIN:agent-teams-lite -->'
-$MarkerEnd = '<!-- END:agent-teams-lite -->'
+$MarkerBegin = '<!-- BEGIN:kurama -->'
+$MarkerEnd = '<!-- END:kurama -->'
 
 # gentle-ai-installer markers (detect to avoid duplication)
 $GaiMarkerBegin = '<!-- gentle-ai:sdd-orchestrator -->'
@@ -60,7 +60,7 @@ $UniqueNamesGeneratorVersion = '4.7.1'
 
 # Content headings that indicate orchestrator is already present
 $OrchestratorHeadings = @(
-    '## Agent Teams Orchestrator',
+    '## Kurama Orchestrator',
     '## Spec-Driven Development (SDD) Orchestrator',
     '## Spec-Driven Development (SDD)'
 )
@@ -78,8 +78,8 @@ $PromptPaths = @{
     'claude-code' = Join-Path $env:USERPROFILE '.claude\CLAUDE.md'
     'opencode'    = Join-Path $env:USERPROFILE '.config\opencode\AGENTS.md'
     'gemini-cli'  = Join-Path $env:USERPROFILE '.gemini\GEMINI.md'
-    'cursor'      = Join-Path $env:USERPROFILE '.cursor\rules\agent-teams-lite.mdc'
-    'vscode'      = Join-Path $env:APPDATA 'Code\User\prompts\agent-teams-lite.instructions.md'
+    'cursor'      = Join-Path $env:USERPROFILE '.cursor\rules\kurama.mdc'
+    'vscode'      = Join-Path $env:APPDATA 'Code\User\prompts\kurama.instructions.md'
     'codex'       = Join-Path $env:USERPROFILE '.codex\agents.md'
 }
 
@@ -258,9 +258,9 @@ function Set-Orchestrator {
         return
     }
 
-    # Strip preamble (human-readable header) — only inject from "## Agent Teams" onward
+    # Strip preamble (human-readable header) — only inject from "## Kurama" onward
     $rawContent = Get-Content -Path $ExampleFile -Raw
-    if ($rawContent -match '(?s)(## Agent Teams.*)') {
+    if ($rawContent -match '(?s)(## Kurama.*)') {
         $content = $Matches[1]
     } else {
         $content = $rawContent
@@ -270,7 +270,7 @@ function Set-Orchestrator {
         $existing = Get-Content -Path $PromptPath -Raw
 
         # Guard against data loss from an unbalanced marker pair before rewriting.
-        Assert-BalancedMarkers -Content $existing -Begin $MarkerBegin -End $MarkerEnd -Label 'agent-teams-lite' -Path $PromptPath
+        Assert-BalancedMarkers -Content $existing -Begin $MarkerBegin -End $MarkerEnd -Label 'kurama' -Path $PromptPath
         Assert-BalancedMarkers -Content $existing -Begin $GaiMarkerBegin -End $GaiMarkerEnd -Label 'gentle-ai' -Path $PromptPath
 
         if ($existing -match [regex]::Escape($MarkerBegin)) {
@@ -526,7 +526,7 @@ try {
 
     Write-Host ''
     Write-Host ([char]0x2554 + ([string][char]0x2550 * 42) + [char]0x2557) -ForegroundColor Cyan
-    Write-Host ([char]0x2551 + '    Agent Teams Lite - Full Setup          ' + [char]0x2551) -ForegroundColor Cyan
+    Write-Host ([char]0x2551 + '    Kurama - Full Setup          ' + [char]0x2551) -ForegroundColor Cyan
     Write-Host ([char]0x2551 + '   Detect - Install - Configure            ' + [char]0x2551) -ForegroundColor Cyan
     Write-Host ([char]0x255A + ([string][char]0x2550 * 42) + [char]0x255D) -ForegroundColor Cyan
 

@@ -1,12 +1,12 @@
 # Architecture
 
-Deep dive into how Agent Teams Lite is structured. For quick start, see the [main README](../README.md).
+Deep dive into how Kurama is structured. For quick start, see the [main README](../README.md).
 
 ---
 
-## Where Agent Teams Lite Fits
+## Where Kurama Fits
 
-Agent Teams Lite sits between basic sub-agent patterns and full Agent Teams runtimes:
+Kurama sits between basic sub-agent patterns and full Agent Teams runtimes:
 
 ```mermaid
 graph TB
@@ -18,7 +18,7 @@ graph TB
         L1_Lead -->|"fire & forget"| L1_Sub2
     end
 
-    subgraph "Level 2 — Agent Teams Lite ⭐"
+    subgraph "Level 2 — Kurama ⭐"
         L2_Orch["Orchestrator<br/>(delegate-only)"]
         L2_Explore["Explorer"]
         L2_Propose["Proposer"]
@@ -74,7 +74,7 @@ graph TB
 
 ## Capability Comparison
 
-| Capability | Basic Subagents | Agent Teams Lite | Full Agent Teams |
+| Capability | Basic Subagents | Kurama | Full Agent Teams |
 |---|:---:|:---:|:---:|
 | Delegate-only lead | — | ✅ | ✅ |
 | DAG-based phase orchestration | — | ✅ | ✅ |
@@ -140,7 +140,7 @@ graph TB
 The canonical phase DAG — `explore → propose → (spec ∥ design) → tasks → apply
 → verify → archive` — is declared once in
 [`skills/_shared/sdd-phase-common.md`](../skills/_shared/sdd-phase-common.md).
-See it there instead of duplicating the graph here; the "Where Agent Teams Lite
+See it there instead of duplicating the graph here; the "Where Kurama
 Fits" diagram above renders the same flow visually.
 
 ---
@@ -154,7 +154,7 @@ Every sub-agent returns a structured envelope (`status`, `executive_summary`, `d
 ## Project Structure
 
 ```
-agent-teams-lite/
+kurama/
 ├── README.md                          ← Project overview and quick start
 ├── LICENSE
 ├── VERSION                            ← Version source of truth; installers and skills/manifest.json reference it
@@ -168,7 +168,7 @@ agent-teams-lite/
 │   │   ├── sdd-phase-common.md        ← Most load-bearing shared file: Sections A-D (skill loading, retrieval, persistence, envelope), loaded by all 8 SDD phase skills
 │   │   ├── persistence-contract.md    ← Mode resolution, sub-agent context protocol, skill loading
 │   │   ├── engram-convention.md       ← Supplementary: deterministic naming & recovery
-│   │   ├── openspec-convention.md     ← File paths, directory structure, config reference — ATL's own convention, NOT the upstream OpenSpec CLI format
+│   │   ├── openspec-convention.md     ← File paths, directory structure, config reference — Kurama's own convention, NOT the upstream OpenSpec CLI format
 │   │   ├── skill-resolver.md          ← Canonical orchestrator protocol for compact-rule injection
 │   │   └── test-runners.md            ← Per-runner detect → full-suite + single-test command table, used by the optional TDD module
 │   ├── sdd-init/SKILL.md             ← Bootstraps project + builds skill registry
@@ -183,7 +183,7 @@ agent-teams-lite/
 │   ├── sdd-apply/SKILL.md            ← v2.0: TDD workflow support
 │   ├── sdd-verify/SKILL.md           ← v2.0: Real test execution + spec compliance matrix
 │   ├── sdd-archive/SKILL.md
-│   ├── skill-registry/SKILL.md       ← Scans skills + conventions, writes .atl/skill-registry.md
+│   ├── skill-registry/SKILL.md       ← Scans skills + conventions, writes .kurama/skill-registry.md
 │   ├── judgment-day/SKILL.md         ← Dual blind review + fix loop
 │   ├── go-testing/SKILL.md           ← Shared Go test patterns
 │   ├── skill-creator/SKILL.md        ← Creates new skills from templates
@@ -228,7 +228,7 @@ agent-teams-lite/
     └── build-examples.sh              ← Assembles examples/_templates/ into every examples/* orchestrator file (portable bash 3.2/BSD)
 
 # Generated in target projects (not in this repo):
-.atl/
+.kurama/
 ├── skill-registry.md                  ← Auto-generated skill catalog for sub-agents
 └── sdd/{change-name}/                 ← Engram fallback store (unavailable-at-start or mid-cycle mem_save failure)
 ```

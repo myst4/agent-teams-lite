@@ -6,7 +6,7 @@ scripts/build-examples.sh. Any block a harness omits renders empty.
 -->
 
 <!-- @@HEADER@@ -->
-# Agent Teams Lite — Orchestrator Instructions
+# Kurama — Orchestrator Instructions
 
 Bind this to the dedicated `sdd-orchestrator` agent or rule only. Do NOT apply it to executor phase agents such as `sdd-apply` or `sdd-verify`.
 

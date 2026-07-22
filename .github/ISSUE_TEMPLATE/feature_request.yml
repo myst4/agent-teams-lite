@@ -1,5 +1,5 @@
 name: Feature Request
-description: Suggest a new feature or improvement for Agent Teams Lite
+description: Suggest a new feature or improvement for Kurama
 labels: ["enhancement", "status:needs-review"]
 body:
   - type: markdown
@@ -45,7 +45,7 @@ body:
       label: "💡 Proposed Solution"
       description: Describe the solution you'd like. How should it work from the user's perspective?
       placeholder: |
-        I'd like agent-teams-lite to...
+        I'd like kurama to...
 
         Example usage:
         ```bash
@@ -63,7 +63,7 @@ body:
     id: scope
     attributes:
       label: "📦 Affected Area"
-      description: Which part of agent-teams-lite does this affect?
+      description: Which part of kurama does this affect?
       options:
         - Scripts (setup, installation)
         - Skills (SDD phases, orchestrator)

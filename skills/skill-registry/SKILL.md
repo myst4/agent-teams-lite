@@ -1,7 +1,7 @@
 ---
 name: skill-registry
 description: >
-  Create or update the skill registry for the current project. Scans user skills and project conventions, writes .atl/skill-registry.md, and saves to engram if available.
+  Create or update the skill registry for the current project. Scans user skills and project conventions, writes .kurama/skill-registry.md, and saves to engram if available.
   Trigger: When user says "update skills", "skill registry", "actualizar skills", "update registry", or after installing/removing skills.
 license: MIT
 metadata:
@@ -38,7 +38,7 @@ This is the foundation of the **Skill Resolver Protocol** (see `_shared/skill-re
    - `~/.cursor/skills/` — Cursor
    - `~/.copilot/skills/` — VS Code Copilot
    - `~/.gemini/antigravity/skills/` — Antigravity
-   - **The parent directory of this skill file** — the catch-all: ATL's own skills are
+   - **The parent directory of this skill file** — the catch-all: Kurama's own skills are
      co-located wherever it was installed, so scanning the parent dir picks up the active
      harness target even if it is not in the explicit list above. The named paths are the
      known install targets; this catch-all is the mechanism that always covers the current one.
@@ -155,10 +155,10 @@ Read the convention files listed above for project-specific patterns and rules. 
 
 #### A. Always write the file (guaranteed availability):
 
-Create the `.atl/` directory in the project root if it doesn't exist, then write:
+Create the `.kurama/` directory in the project root if it doesn't exist, then write:
 
 ```
-.atl/skill-registry.md
+.kurama/skill-registry.md
 ```
 
 #### B. If engram is available, also save to engram (cross-session bonus):
@@ -184,7 +184,7 @@ because the registry is an automated build output, not a human decision (see
 ## Skill Registry Updated
 
 **Project**: {project name}
-**Location**: .atl/skill-registry.md
+**Location**: .kurama/skill-registry.md
 **Engram**: {saved / not available}
 
 ### User Skills Found
@@ -205,11 +205,11 @@ To update after installing/removing skills, run this again.
 
 ## Rules
 
-- ALWAYS write `.atl/skill-registry.md` regardless of any SDD persistence mode
+- ALWAYS write `.kurama/skill-registry.md` regardless of any SDD persistence mode
 - ALWAYS save to engram if the `mem_save` tool is available
 - SKIP `sdd-*`, `_shared`, and `skill-registry` directories when scanning
 - Read SKILL.md files (respecting the 200-line guard in Step 1) to generate accurate compact rules — this is a build-time cost, not a runtime cost
 - Compact rules MUST be 5-15 lines per skill — concise, actionable, no fluff
 - Include ALL convention index files found (not just the first)
 - If no skills or conventions are found, write an empty registry (so sub-agents don't waste time searching)
-- Add `.atl/` to the project's `.gitignore` if it exists and `.atl` is not already listed
+- Add `.kurama/` to the project's `.gitignore` if it exists and `.kurama` is not already listed

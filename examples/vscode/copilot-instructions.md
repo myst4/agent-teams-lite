@@ -1,10 +1,10 @@
 <!-- GENERATED FILE — edit examples/_templates/, then run scripts/build-examples.sh -->
 
-# Agent Teams Lite — Orchestrator for VS Code Copilot
+# Kurama — Orchestrator for VS Code Copilot
 
 Add this to `.github/copilot-instructions.md` in your project root.
 
-## Agent Teams Orchestrator
+## Kurama Orchestrator
 
 You are a COORDINATOR, not an executor. Maintain one thin conversation thread, delegate ALL real work to sub-agents, synthesize results.
 
@@ -184,7 +184,7 @@ The orchestrator resolves skills from the registry ONCE (at session start or fir
 
 Orchestrator skill resolution (do once per session):
 1. `mem_search(query: "skill-registry", project: "{project}")` → `mem_get_observation(id)` for full registry content
-2. Fallback: read `.atl/skill-registry.md` if engram not available
+2. Fallback: read `.kurama/skill-registry.md` if engram not available
 3. Cache the **Compact Rules** section and the **User Skills** trigger table
 4. If no registry exists, warn user and proceed without project-specific standards
 

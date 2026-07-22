@@ -38,7 +38,7 @@ You are an EXECUTOR for this phase, not the orchestrator. Do the initialization 
   (See `skills/_shared/engram-convention.md` for full naming conventions.)
 - If mode is `openspec`: Read and follow `skills/_shared/openspec-convention.md`. Run full bootstrap.
 - If mode is `hybrid`: Read and follow BOTH convention files. Run openspec bootstrap AND persist context to Engram.
-- If mode is `none`: Return detected context without writing project files. Exception: `.atl/skill-registry.md` is harness infrastructure (not a project file), so it is still written in `none` mode — see Step 4.
+- If mode is `none`: Return detected context without writing project files. Exception: `.kurama/skill-registry.md` is harness infrastructure (not a project file), so it is still written in `none` mode — see Step 4.
 
 ## What to Do
 
@@ -160,9 +160,9 @@ invocation. Existing test files never flip `tdd.enabled` on their own. Set
 
 Follow the same logic as the `skill-registry` skill (`skills/skill-registry/SKILL.md`):
 
-1. Scan user skills: glob `*/SKILL.md` across ALL known skill directories (they mirror the per-harness install targets in `skills/manifest.json`). **User-level**: `~/.claude/skills/`, `~/.config/opencode/skills/`, `~/.gemini/skills/`, `~/.codex/skills/`, `~/.cursor/skills/`, `~/.copilot/skills/`, `~/.gemini/antigravity/skills/`, and the parent directory of this skill file (the catch-all — ATL's own skills are co-located wherever it was installed, so this always covers the active harness target even if it is not in the explicit list). **Project-level**: `.claude/skills/`, `.config/opencode/skills/`, `.gemini/skills/`, `.codex/skills/`, `.cursor/skills/`, `.copilot/skills/`, `.gemini/antigravity/skills/`, `skills/`. Skip `sdd-*`, `_shared`, `skill-registry`. Deduplicate by name (project-level wins). Read frontmatter triggers.
+1. Scan user skills: glob `*/SKILL.md` across ALL known skill directories (they mirror the per-harness install targets in `skills/manifest.json`). **User-level**: `~/.claude/skills/`, `~/.config/opencode/skills/`, `~/.gemini/skills/`, `~/.codex/skills/`, `~/.cursor/skills/`, `~/.copilot/skills/`, `~/.gemini/antigravity/skills/`, and the parent directory of this skill file (the catch-all — Kurama's own skills are co-located wherever it was installed, so this always covers the active harness target even if it is not in the explicit list). **Project-level**: `.claude/skills/`, `.config/opencode/skills/`, `.gemini/skills/`, `.codex/skills/`, `.cursor/skills/`, `.copilot/skills/`, `.gemini/antigravity/skills/`, `skills/`. Skip `sdd-*`, `_shared`, `skill-registry`. Deduplicate by name (project-level wins). Read frontmatter triggers.
 2. Scan project conventions: check for `agents.md`, `AGENTS.md`, `CLAUDE.md` (project-level), `.cursorrules`, `GEMINI.md`, `copilot-instructions.md` in the project root. If an index file is found (e.g., `agents.md`), READ it and extract all referenced file paths — include both the index and its referenced files in the registry.
-3. **ALWAYS write `.atl/skill-registry.md`** in the project root (create `.atl/` if needed). This file is harness infrastructure, NOT an SDD project artifact, so it is written in EVERY mode — including `none`. The persistence-mode gates that suppress project files (e.g. `openspec/`) never apply to `.atl/`.
+3. **ALWAYS write `.kurama/skill-registry.md`** in the project root (create `.kurama/` if needed). This file is harness infrastructure, NOT an SDD project artifact, so it is written in EVERY mode — including `none`. The persistence-mode gates that suppress project files (e.g. `openspec/`) never apply to `.kurama/`.
 4. If engram is available, **ALSO save to engram**: `mem_save(title: "skill-registry", topic_key: "skill-registry", type: "config", project: "{project}", capture_prompt: false, content: "{registry markdown}")` (`capture_prompt: false` — automated build output, not a human decision)
 
 See `skills/skill-registry/SKILL.md` for the full registry format and scanning details.
@@ -227,14 +227,14 @@ Phase-specific fields to surface in `detailed_report` (adapt wording to the mode
 - **Compliance mode**: {behavioral | static} — {test infra detected? one-line rationale}
 - **TDD**: {enabled | disabled} — {user's answer to the explicit question; single_test_command if enabled}
 - **Settings home**: `sdd-init/{project}` context artifact (engram/none) or `openspec/config.yaml` (openspec/hybrid)
-- **Skill registry**: `.atl/skill-registry.md` (+ Engram `skill-registry` when available)
+- **Skill registry**: `.kurama/skill-registry.md` (+ Engram `skill-registry` when available)
 
 Populate the envelope fields per mode:
 
 - `artifacts`: what was written — for `openspec`/`hybrid`, `openspec/config.yaml` plus
   the created directories (and the Engram `sdd-init/{project}` observation for
   `hybrid`); for `engram`, the Engram `sdd-init/{project}` observation ID; for `none`,
-  only `.atl/skill-registry.md` (no project files — the `.atl/` registry is harness
+  only `.kurama/skill-registry.md` (no project files — the `.kurama/` registry is harness
   infrastructure, not a project artifact).
 - `next_recommended`: `sdd-explore` (or `sdd-new` when the user already has a change name).
 - `risks`: include a note in `none` mode recommending `engram` or `openspec` so SDD

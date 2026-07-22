@@ -18,7 +18,7 @@ Each sub-agent is a SKILL.md file — pure Markdown instructions that any AI ass
 | **Verifier** | `sdd-verify/SKILL.md` | Validates implementation against specs with real test execution. v2.0: spec compliance matrix |
 | **Archiver** | `sdd-archive/SKILL.md` | Merges delta specs into main specs, moves to archive |
 | **TDD Module** | `tdd/SKILL.md` | Optional RED-GREEN-REFACTOR cycle contract; loaded by `sdd-apply` when TDD resolves active, referenced by `sdd-tasks` and `sdd-verify`. Opt-in `tdd` manifest group, not installed by default |
-| **Skill Registry** | `skill-registry/SKILL.md` | Scans user skills + project conventions, writes `.atl/skill-registry.md` |
+| **Skill Registry** | `skill-registry/SKILL.md` | Scans user skills + project conventions, writes `.kurama/skill-registry.md` |
 | **Judgment Day** | `judgment-day/SKILL.md` | Runs dual adversarial review with two blind judges and a fix loop |
 | **Go Testing** | `go-testing/SKILL.md` | Shared conventions for Go tests, including Bubbletea and teatest patterns |
 | **Skill Creator** | `skill-creator/SKILL.md` | Creates new reusable skills following the project skill spec |
@@ -117,7 +117,7 @@ Sub-agents start with a **fresh context** — they do not know what user skills 
 
 **How the registry gets built:**
 1. `/sdd-init` or `/skill-registry` scans your installed skills and project conventions
-2. Writes `.atl/skill-registry.md` in the project root (mode-independent, always created)
+2. Writes `.kurama/skill-registry.md` in the project root (mode-independent, always created)
 3. If engram is available, also saves to engram (cross-session bonus)
 
 Once the registry exists, resolving it and injecting compact rules into each delegation follows the canonical protocol in [`skills/_shared/skill-resolver.md`](../skills/_shared/skill-resolver.md) — see that file for the full resolution order, injection format, fallback chain, and the `skill_resolution` feedback loop.
@@ -202,14 +202,14 @@ separate delegations. This is entirely optional and OFF by default:
 
 - The default path — the "SDD Phase Sub-Agents" table above — never requires
   agent teams, and remains the supported path across all 7 harnesses.
-- Agent-teams mode is Claude-Code-specific and experimental; ATL does not
+- Agent-teams mode is Claude-Code-specific and experimental; Kurama does not
   depend on it, ship it enabled, or gate any phase behind it.
 - When a user enables it in their own Claude Code configuration, the same
   `examples/claude-code/agents/sdd-spec.md` / `sdd-design.md` definitions and
   the two judge roles in `judgment-day/SKILL.md` can be reused as teammate
   definitions — no separate agent-teams-specific files are shipped.
 
-ATL's "Level 2" position — delegate-only lead, DAG-based phases, parallel
+Kurama's "Level 2" position — delegate-only lead, DAG-based phases, parallel
 `spec ∥ design`, no shared task queue or peer-to-peer messaging — described in
 [docs/architecture.md](architecture.md) is unaffected: agent-teams mode is an
 optional accelerator for two already-parallel points in the DAG, not a

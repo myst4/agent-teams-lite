@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ============================================================================
-# Agent Teams Lite — Install Script
+# Kurama — Install Script
 # Copies skills to your AI coding assistant's skill directory
 # Cross-platform: macOS, Linux, Windows (Git Bash / WSL)
 # ============================================================================
@@ -15,7 +15,7 @@ VERSION_FILE="$REPO_DIR/VERSION"
 
 # Name of the per-target install manifest (records version + installed files so
 # upgrades can detect leftovers and uninstall.sh can remove exactly what we wrote).
-INSTALL_MANIFEST_NAME=".atl-install-manifest.json"
+INSTALL_MANIFEST_NAME=".kurama-install-manifest.json"
 
 # Skill-group selection. Groups come from skills/manifest.json; sdd-core is
 # mandatory, quality + review + optional are on by default and opt-out via
@@ -157,7 +157,7 @@ make_writable() {
 print_header() {
     echo ""
     echo -e "${CYAN}${BOLD}╔══════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}${BOLD}║      Agent Teams Lite — Installer        ║${NC}"
+    echo -e "${CYAN}${BOLD}║      Kurama — Installer        ║${NC}"
     echo -e "${CYAN}${BOLD}║   Spec-Driven Development for AI Agents  ║${NC}"
     echo -e "${CYAN}${BOLD}╚══════════════════════════════════════════╝${NC}"
     echo ""
@@ -199,7 +199,7 @@ show_help() {
     echo "  --path DIR       Custom install path (use with --agent custom)"
     echo "  --with GROUP     Include an optional skill group (quality, review, optional, tdd)"
     echo "  --without GROUP  Exclude an optional skill group (quality, review, optional)"
-    echo "  --version        Print the Agent Teams Lite version and exit"
+    echo "  --version        Print the Kurama version and exit"
     echo "  -h, --help       Show this help"
     echo ""
     echo "Agents: claude-code, opencode, gemini-cli, codex, vscode, antigravity, cursor, project-local, all-global"
@@ -226,7 +226,7 @@ read_version() {
 }
 
 print_version() {
-    printf 'agent-teams-lite %s\n' "$(read_version)"
+    printf 'kurama %s\n' "$(read_version)"
 }
 
 # Emit "<name> <group>" for every skill declared in skills/manifest.json.
@@ -336,7 +336,7 @@ write_install_manifest() {
     make_writable "$manifest_path"
     {
         printf '{\n'
-        printf '  "name": "agent-teams-lite",\n'
+        printf '  "name": "kurama",\n'
         printf '  "version": "%s",\n' "$version"
         printf '  "tool": "%s",\n' "$tool_name"
         printf '  "files": [\n'
