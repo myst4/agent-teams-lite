@@ -152,7 +152,7 @@ git checkout -b feat/authflow-2-refresh feat/authflow-1-token-store
 git push -u origin feat/authflow-2-refresh
 gh pr create --base feat/authflow-1-token-store \
   --title "feat(auth): add refresh flow" \
-  --body "Closes #102"
+  --body "Refs #102"   # base ≠ default → Refs (see Closes vs Refs); flips to Closes on re-parent onto main
 ```
 
 Document the order in every chained PR body:
@@ -172,6 +172,7 @@ git checkout feat/authflow-2-refresh
 git rebase --onto main feat/authflow-1-token-store
 git push --force-with-lease
 gh pr edit <unit-2-pr> --base main
+# base is now the default branch → switch the body's `Refs #102` back to `Closes #102`
 ```
 
 ---
@@ -212,8 +213,18 @@ The PR template is at `.github/PULL_REQUEST_TEMPLATE.md`. Every PR body MUST con
 Closes #<issue-number>
 ```
 
-Valid keywords: `Closes #N`, `Fixes #N`, `Resolves #N` (case insensitive).
+Valid closing keywords: `Closes #N`, `Fixes #N`, `Resolves #N` (case insensitive).
 The linked issue MUST have the `status:approved` label.
+
+**Closes vs Refs — keyed on the PR base:**
+
+- **Base is the repo's default branch** → use a closing keyword (`Closes #N`); the merge
+  auto-closes the issue.
+- **Base is NOT the default branch** (e.g. a stacked PR onto a feature branch) → a closing
+  keyword does NOT auto-close toward a non-default base, so use `Refs #N` instead and close
+  the issue explicitly after the merge (`gh issue close #N`, step 3 of the Post-approval
+  flow). When the PR is later re-parented onto the default branch (see *Chained PRs*),
+  switch the body back to `Closes #N`.
 
 ### 2. PR Type (REQUIRED)
 
@@ -269,6 +280,72 @@ All boxes must be checked:
 | PR Validation | `Check Issue Has status:approved` | Linked issue has `status:approved` |
 | PR Validation | `Check PR Has type:* Label` | PR has exactly one `type:*` label |
 | CI | `Shellcheck` | Shell scripts pass `shellcheck` |
+
+---
+
+## Kanban Board Sync (optional)
+
+Applies only when the project has `kanban.enabled: true` (see the **Kanban Module** in
+the orchestrator instructions and `skills/kanban-github/SKILL.md`). With kanban inactive none
+of this runs and PR behavior is unchanged.
+
+- **Issue link.** The PR body's linked-issue line (already REQUIRED under *PR Body Format →
+  Linked Issue*) is what the board relies on: `Closes #{issue}` when the base is the default
+  branch (auto-links and auto-closes on merge), or `Refs #{issue}` when the base is not the
+  default branch (the agent closes the issue explicitly after the merge — see Post-approval
+  flow step 3).
+- **On PR open → In Review.** Once `gh pr create` succeeds, the card advances to **In
+  Review**. The orchestrator runs this move inline as `gh` state — it owns every board
+  transition; the PR/phase sub-agent never touches the board. A failed move is a WARNING
+  in the envelope's `risks` and never blocks.
+- **Post the PR link on the issue.** After the PR is open, comment its URL on the issue so
+  the trail lives on the board (`gh issue comment {issue} --body {pr-url}`); a failed comment
+  is a WARNING, never a blocker. During planning, important decisions MAY also be recorded as
+  issue comments (optional but recommended).
+
+---
+
+## Post-approval flow
+
+Runs after the PR is open and reviewed, **with or without kanban**. The trigger is the
+user's **explicit OK** on the PR — this is ALWAYS a human gate. Never auto-merge, not even
+in `execution_mode: auto`.
+
+**Hard preconditions — ALL THREE must hold before the merge:**
+
+- **(a) Explicit OK for THIS PR** — never implicit, never inherited from another PR, never
+  deduced from a "looks good".
+- **(b) Branch rebased onto its base and re-verified** after the rebase.
+- **(c) `gh pr checks <pr-number>` all pass, run IMMEDIATELY before the merge** — fresh
+  evidence from the command, never a remembered green.
+
+**Canonical order (identical in `skills/kanban-github/SKILL.md` and the orchestrator
+instructions):**
+
+1. **Merge with the configured method and delete the branch.** The method is
+   `kanban.merge_method` when kanban is active (default `squash`); without kanban, default
+   to `squash` unless the user picked `merge` or `rebase`.
+   ```bash
+   gh pr merge <pr-number> --squash --delete-branch   # --squash | --merge | --rebase per the configured method
+   ```
+2. **Verify the merge landed** before proceeding:
+   ```bash
+   gh pr view <pr-number> --json state -q .state       # expect: MERGED
+   ```
+   If the merge command FAILS, STOP — report it and wait for the user's instruction. This
+   is a delivery action, not bookkeeping, so it is the one board-adjacent step allowed to
+   halt the flow (the failures-never-block rule does not cover it).
+3. **If the body used `Refs #{issue}` (non-default base), close the issue explicitly:**
+   ```bash
+   gh issue close <issue-number>                        # no-op for Closes-based PRs (auto-closed on merge)
+   ```
+4. **Kanban only — move the card to Done.** With `kanban.enabled`, advance the card to
+   **Done** (orchestrator, inline `gh`, per `skills/kanban-github/SKILL.md`). A failed move
+   is a WARNING in `risks`, never a blocker.
+5. **Return to the base branch:**
+   ```bash
+   git checkout <default-branch> && git pull
+   ```
 
 ---
 

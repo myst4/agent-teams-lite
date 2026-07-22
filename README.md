@@ -4,7 +4,7 @@
 
 **A lightweight, multi-harness Spec-Driven Development framework for AI coding agents.**
 
-24 pure-Markdown skills · 8 supported harnesses · zero runtime, zero dependencies
+25 pure-Markdown skills · 8 supported harnesses · zero runtime, zero dependencies
 
 </div>
 
@@ -13,9 +13,10 @@
 ## What it is
 
 Kurama turns any capable AI coding assistant into a disciplined
-**Spec-Driven Development (SDD)** team. It ships as **24 portable Markdown skills**
-(all installed by default — the `tdd` module is included but removable with
-`--without tdd`) plus a set of shared convention files, and a thin
+**Spec-Driven Development (SDD)** team. It ships as **25 portable Markdown skills**
+(all installed by default — the optional `tdd` and `kanban-github` modules are included but
+removable with `--without tdd` / `--without optional`) plus a set of shared convention
+files, and a thin
 *delegate-only orchestrator* prompt. The orchestrator never writes code itself — it coordinates a pipeline of
 focused sub-agents, each running in a **fresh context window**, that explore,
 specify, design, implement, and verify a change.
@@ -100,10 +101,11 @@ multi mode) live in [docs/installation.md](docs/installation.md).
 
 ## The skills
 
-All 24 skills, grouped by role. Every one is a single `SKILL.md` that any
-file-reading agent can load. All 24 install by default; the `tdd` module ships
-installed too and can be excluded with `--without tdd`. Installing it never
-activates TDD — that stays a separate per-project switch.
+All 25 skills, grouped by role. Every one is a single `SKILL.md` that any
+file-reading agent can load. All 25 install by default; the optional `tdd` and
+`kanban-github` modules ship installed too and can be excluded with `--without tdd` /
+`--without optional`. Installing either never activates it — both stay separate
+per-project switches.
 
 ### Orchestration entry points
 
@@ -166,6 +168,12 @@ by the diff can block, and only `BLOCKER`/`CRITICAL` gate. See
 |-------|------|
 | `tdd` | Language-agnostic RED → GREEN → REFACTOR contract, anti-patterns, and per-task evidence format. Installed by default; remove the module with `--without tdd`. Installing it never activates TDD — that is a separate explicit per-project switch (see [docs/tdd.md](docs/tdd.md)). |
 
+### Kanban module (installed by default, activation opt-in)
+
+| Skill | Role |
+|-------|------|
+| `kanban-github` | Optional GitHub Projects (v2) board sync: each issue the harness works on is a card the orchestrator moves through Backlog → Ready → In Progress → In Review → Done as the SDD cycle crosses phase boundaries. Installed by default (manifest group `optional`; remove with `--without optional`). Installing it never activates the board — activation is opt-in per project via `kanban.enabled`, and **requires a configured GitHub CLI (`gh`)** to turn on. Failed board updates are WARNINGs that never block the cycle. See [docs/kanban-github.md](docs/kanban-github.md). |
+
 Shared behavior the SDD skills rely on lives in
 [`skills/_shared/`](skills/_shared/) — the persistence contract, the Engram and
 OpenSpec conventions, the phase-common return envelope, and the skill resolver.
@@ -210,6 +218,7 @@ exposes. "Full" means true sub-agents with isolated, fresh context windows.
 - [docs/architecture.md](docs/architecture.md) — orchestration model, the phase DAG, and the result contract.
 - [docs/sub-agents.md](docs/sub-agents.md) — how phases run as sub-agents and share conventions.
 - [docs/persistence.md](docs/persistence.md) — the four artifact store modes in depth.
+- [docs/kanban-github.md](docs/kanban-github.md) — the optional GitHub Projects board sync module.
 - [docs/token-economics.md](docs/token-economics.md) — the cost analysis behind context isolation.
 - [docs/changelog.md](docs/changelog.md) — release history.
 

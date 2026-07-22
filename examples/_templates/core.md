@@ -139,6 +139,27 @@ The orchestrator reads `execution_mode` once per session and propagates it along
 
 `execution_mode: supervised | auto` — `supervised` (default) stops at the human gates (post-propose, verify FAIL, pre-archive) and asks for a decision; `auto` advances automatically, halting only on `status: blocked` or a verify FAIL. In BOTH modes, `sdd-archive` is never auto-run — it always requires an explicit go-ahead. `/sdd-ff` always runs the remaining phases in `auto` regardless of the configured value.
 
+### Kanban Module (optional)
+
+Kanban is opt-in per project and, like TDD, install ≠ activate: the `kanban-github` skill installs by default but only runs when the project turns it on. Enable it via `kanban.enabled`: the `kanban:` block in `openspec/config.yaml` (openspec/hybrid modes), or the `kanban` block in the `sdd-init/{project}` settings bundle (engram mode). Activation requires a configured GitHub CLI (`gh`) — `sdd-init` verifies `gh` is installed, authenticated, and has the `read:project,project` scopes (read + write) before it records `kanban.enabled: true`.
+
+The orchestrator reads `kanban.enabled` — and the cached board IDs (`user`, `owner`, `repo`, `project_number`, `project_id`, `status_field_id`, the `stages` → option-id map, `merge_method`) — once per session, the same way it reads `tdd` and `execution_mode`; a value the orchestrator explicitly propagates always wins.
+
+When the module is active, the orchestrator moves the issue's card at each phase boundary — **inline, as `gh` state** (the delegation table's "Bash for state"). Phase executors NEVER touch the board. Each transition's exact `gh` command lives in `skills/kanban-github/SKILL.md`, keyed off the cached IDs:
+
+| Phase boundary | Card moves to |
+|----------------|---------------|
+| Work on the issue starts (`/sdd-new` or `/sdd-continue` picks it up) — all planning lives here (explore → propose → spec/design → tasks) | **Ready** |
+| `sdd-apply` starts coding | **In Progress** |
+| `branch-pr` opens the PR (body carries `Closes #{issue}` when the base is the default branch, else `Refs #{issue}`; the PR link is also posted as an issue comment) | **In Review** |
+| The user gives the explicit final OK | merge → verify MERGED → (if `Refs`) `gh issue close #{issue}` → **Done** → `git checkout {default-branch} && git pull` |
+
+**Work intake.** An existing issue moves to **Ready** only when work actually STARTS; a request with no issue is born in **Backlog** (by `skills/issue-creation`) and reaches **Ready** at start; with no specific request, take the topmost **Ready** card and, if Ready is empty, ASK. NEVER pull from **Backlog** on your own initiative — prioritization is the human's. Cards enter at **Backlog** with the assignee (`@me` by default, or the `kanban.user` override) when the issue is first created — that placement is owned by `skills/issue-creation`, and the module manages ONLY the 5 mapped stages (any other board column is ignored).
+
+**The final OK is ALWAYS a human gate** — the merge step never runs automatically, not even in `execution_mode: auto` — and requires all three hard preconditions before the merge: (a) an explicit OK for THIS PR (never implicit, inherited, or deduced from a "looks good"), (b) the branch rebased onto its base and re-verified, and (c) `gh pr checks {pr}` all passing, run IMMEDIATELY before the merge (fresh evidence, never a remembered green). The post-OK order is canonical and identical to `skills/branch-pr` and `skills/kanban-github/SKILL.md`: merge → verify MERGED → (if `Refs`) close the issue → move to **Done** → return to base.
+
+**Failures never block.** Any kanban `gh` command that fails is recorded as a WARNING in the phase envelope's `risks` and the development cycle CONTINUES — the board is bookkeeping, it never halts a phase. The single exception is the `gh pr merge` at the final gate: it is a delivery action, so if it fails the orchestrator reports it and waits for instruction (see **Post-approval flow** in `skills/branch-pr`).
+
 ### Automatic Mode Gatekeeper
 
 In `auto` mode the orchestrator is the gate between phases. After every delegated phase returns and BEFORE launching the next sub-agent, validate the result against the **Result Contract** / Section D envelope. This is autonomous validation — it never asks the user (that is `supervised` mode); it only surfaces when it catches a problem.

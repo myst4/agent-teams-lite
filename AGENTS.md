@@ -37,3 +37,4 @@ When working on this project, load the relevant skill(s) BEFORE writing any code
 | `skill-creator` | When creating a new skill or documenting agent instructions for AI. | [`skills/skill-creator/SKILL.md`](skills/skill-creator/SKILL.md) |
 | `branch-pr` | When creating a pull request, opening a PR, or preparing changes for review. | [`skills/branch-pr/SKILL.md`](skills/branch-pr/SKILL.md) |
 | `issue-creation` | When creating a GitHub issue, reporting a bug, or requesting a feature. | [`skills/issue-creation/SKILL.md`](skills/issue-creation/SKILL.md) |
+| `kanban-github` | When a project has `kanban.enabled: true` and the orchestrator needs the exact `gh` command to move an issue's card at an SDD phase boundary, or when `sdd-init` onboards the board. | [`skills/kanban-github/SKILL.md`](skills/kanban-github/SKILL.md) |

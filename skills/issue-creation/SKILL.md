@@ -35,8 +35,9 @@ Use this skill when:
 3. Fill in ALL required fields
 4. Check pre-flight checkboxes
 5. Submit → issue gets status:needs-review automatically
-6. Wait for maintainer to add status:approved
-7. Only then open a PR linking this issue
+6. If kanban.enabled → add the issue to the project (Backlog) and assign it (`@me` by default, or the `kanban.user` override) (see Kanban Integration)
+7. Wait for maintainer to add status:approved
+8. Only then open a PR linking this issue
 ```
 
 ---
@@ -232,3 +233,33 @@ gh issue edit <number> --add-label "status:approved"
 # Maintainer: add priority
 gh issue edit <number> --add-label "priority:high"
 ```
+
+---
+
+## Kanban Integration (conditional)
+
+Only when the project has **`kanban.enabled: true`** (settings from the
+`sdd-init/{project}` bundle or `openspec/config.yaml`; see `skills/kanban-github/SKILL.md`).
+With Kanban inactive, this section is a **no-op** — issue creation behaves exactly as
+above, zero extra commands, zero behavior change.
+
+When Kanban IS active, append **two `gh` commands** after the issue is created — add the
+new issue to the configured GitHub Project (it enters at **Backlog**) and assign it. The
+default assignee is `@me` (the issue goes to whoever created it); `kanban.user`, when set,
+overrides it with a fixed login. Use the cached `kanban.*` values (`project_number`,
+`owner`, and `user` when overriding):
+
+```bash
+# 1. Add the new issue to the configured GitHub Project → lands at Backlog
+gh project item-add {project_number} --owner {owner} --url {issue-url}
+
+# 2. Assign the issue — @me by default, or the kanban.user override
+gh issue edit {issue-number} --add-assignee {user-or-@me}
+```
+
+- These are **bookkeeping**: if either command fails, record a WARNING and CONTINUE —
+  a board that could not be updated never blocks issue creation (see `skills/kanban-github/SKILL.md`
+  → *Failure Semantics*).
+- The card enters the board at **Backlog** (the board's initial Status). If a board has no
+  "set Status on add" workflow, the explicit Backlog set is the `kanban-github` skill's *issue
+  created* transition, not part of this two-command step.

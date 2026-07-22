@@ -443,6 +443,48 @@ target in `skills/manifest.json`. The orchestrator is the generated
 **Action required**: none. If you use Pi, run `setup.sh --agent pi` (or follow the
 manual steps in the installation guide) to wire the orchestrator.
 
+## Phase 9 — Optional GitHub Projects kanban module
+
+### New `kanban-github` skill in the default set (install ≠ activate)
+
+Phase 9 adds an optional GitHub Projects (v2) board-sync module,
+[`skills/kanban-github`](../skills/kanban-github/SKILL.md), to the `optional` manifest group. A
+default install now lands **25 skills** (was 24); `--without tdd` lands **24**, and
+`--without optional` now drops **two** skills (`go-testing` **and** `kanban-github`) for
+**23**. Installing the module never activates the board — activation is opt-in per
+project through the explicit `kanban.enabled` flag, exactly like the TDD switch.
+
+**Action required**: none functionally. Re-run `setup.sh`/`install.sh` once to land
+the module in the default set (or pass `--without optional` to keep the `optional`
+group off disk). No config migration — projects that never opt in are unaffected,
+and the board stays inactive until `kanban.enabled: true` is set.
+
+### Activating the board requires a configured `gh`
+
+When you enable kanban for a project, `sdd-init` requires a working GitHub CLI and
+verifies it in order — `gh --version`, `gh auth status`, and the `read:project,project`
+scopes (`gh project list --owner @me`). A failing check is never fatal: `sdd-init` prints
+the exact fix (`brew install gh` / `gh auth login` / `gh auth refresh -s read:project,project`),
+records `kanban.enabled: false`, and continues init. You can re-run `/sdd-init` once
+the prerequisite is in place. The `gh` requirement applies **only** to activating
+kanban — every other skill works without it.
+
+### New `kanban` config block (opt-in, defaults inert)
+
+Enabling the board persists a top-level `kanban:` block (in `openspec/config.yaml`
+for openspec/hybrid, or the `sdd-init/{project}` context artifact for engram/none)
+holding the board wiring `sdd-init` caches during onboarding: `enabled`, the OPTIONAL
+`user` (empty => `@me`), `owner`, `repo`, `project_number`, the cached `project_id`
+(`PVT_...`), `status_field_id`, `merge_method`, the `stages` map (canonical stage →
+real board option id), and the OPTIONAL `size_field_id` + `sizes` map. The schema is
+byte-identical across `openspec-convention.md`, the `sdd-init` template, and
+`skills/kanban-github/SKILL.md`.
+
+**Action required**: none. The block only appears when you opt in; absent, the board
+is simply off. The 5-stage lifecycle (Backlog → Ready → In Progress → In Review →
+Done), the assignment rule, the WARNING-on-failure semantics, and the human merge
+gate are documented in [docs/kanban-github.md](kanban-github.md).
+
 ## Detecting an old install/clone
 
 - No `VERSION` file at the repo root → your clone predates Phase 2

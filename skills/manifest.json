@@ -19,7 +19,7 @@
       "required": false
     },
     "optional": {
-      "description": "Optional language/testing skills. Installed by default; opt out with --without optional.",
+      "description": "Optional language/testing skills plus the GitHub Projects kanban-github module. Installed by default; opt out with --without optional. Installing the kanban-github module does not activate the board — activation stays opt-in per project via kanban.enabled.",
       "default": true,
       "required": false
     },
@@ -53,6 +53,7 @@
     { "name": "review-resilience", "group": "review" },
     { "name": "review-refuter", "group": "review" },
     { "name": "go-testing", "group": "optional" },
+    { "name": "kanban-github", "group": "optional" },
     { "name": "tdd", "group": "tdd" }
   ],
   "targets": {

@@ -84,6 +84,41 @@ Read the project to understand:
   auto-run in either mode). Record the answer as `execution_mode` (default `supervised` when the
   user does not choose). Note for the user: `/sdd-ff` always fast-forwards its phases in `auto`
   regardless of this setting.
+- **Kanban board (explicit question — same manner as TDD; default disabled)**: The optional
+  Kanban module syncs a GitHub Projects (v2) board to the SDD cycle. Like TDD, install ≠
+  activate and there are ZERO heuristics — an existing project or a configured `gh` NEVER
+  auto-enable it.
+  **Preflight — is the module installed?** The `kanban-github` skill ships in the excludable
+  `optional` manifest group; resolve `kanban-github/SKILL.md` across the same skill-resolution
+  paths Step 4 scans. If it is NOT resolvable (excluded with `--without optional`), do NOT ask
+  the question, record `kanban.enabled=false`, and note it in `risks`.
+  **If resolvable**, ask directly: **"Enable Kanban board sync (GitHub Projects) for this
+  project?"** (default `false` when the user does not opt in).
+  - **On "yes", first verify the `gh` prerequisite in order** — activation REQUIRES a
+    configured GitHub CLI. If any check fails, print the exact fix command, record
+    `kanban.enabled=false`, surface it in `risks`, and continue init (the user can re-run
+    `/sdd-init` once fixed):
+    1. `gh --version` (installed) → fix: `brew install gh`
+    2. `gh auth status` (authenticated) → fix: `gh auth login`
+    3. `gh project list --owner @me --limit 1` (the `read:project,project` scopes) → fix: `gh auth refresh -s read:project,project`
+  - **When all three pass, run the onboarding** (see `skills/kanban-github/SKILL.md` → *Onboarding &
+    Cached IDs* for the full detail) and CONFIRM each value with the user:
+    - **assignee**: the default is `@me` (every issue/card the harness creates is assigned to
+      whoever created it); `kanban.user` is an OPTIONAL override — set a specific login only when
+      the project wants a fixed assignee, otherwise leave it empty for `@me`.
+    - **project**: `gh project list --owner {owner}` (owner deduced from `git remote`; confirm)
+      — pick the project, capture its `number`, and cache `project_id` via
+      `gh project view {project_number} --owner {owner} --format json --jq '.id'`.
+    - **Status field + options**: `gh project field-list {project_number} --owner {owner}
+      --format json` — capture the Status single-select field `id` and each option `id`.
+    - **stage mapping**: map the board's REAL options to the 5 canonical stages
+      (`backlog`, `ready`, `in_progress`, `in_review`, `done`) — NEVER hardcode names; if the
+      board uses other labels (e.g. `Todo`), confirm the mapping. Only these 5 stages are
+      managed; any other board column (e.g. `Resources`) is ignored.
+    - **merge method**: ask `merge` | `squash` | `rebase` for the final gate (default `squash`).
+    - **Size field (optional)**: if the board has a Size single-select field, optionally cache
+      `size_field_id` + the `sizes` map; skip without error when absent.
+    Record `kanban.enabled=true` and the full `kanban` block (schema in Step 3).
 
 ### Step 2: Initialize Persistence Backend
 
@@ -145,9 +180,36 @@ rules:
 tdd:
   enabled: false               # opt-in switch for the optional TDD module (RED → GREEN → REFACTOR)
   single_test_command: ""      # e.g. "npm test -- {file}"; runs ONE test/scenario for a fast RED cycle
+
+# Optional Kanban module — GitHub Projects board sync (see skills/kanban-github/SKILL.md).
+# Installed by default (manifest group `optional`); activation is opt-in per project
+# and REQUIRES a configured GitHub CLI (gh). In engram mode these keys live in the
+# sdd-init/{project} context artifact instead of this file.
+kanban:
+  enabled: false             # opt-in switch; set true only after the gh prerequisite checks pass
+  user: ""                   # optional assignee override; empty => @me (the active gh account owns every harness-created issue)
+  owner: ""                  # repo owner, deduced from the git remote and confirmed
+  repo: ""                   # repository name
+  project_number: 0          # GitHub Project (v2) number (used by item-add / field-list / view)
+  project_id: ""             # cached ProjectV2 node id (PVT_...) captured at onboarding; reused by every card move
+  status_field_id: ""        # node id of the board's Status single-select field (PVTSSF_...)
+  merge_method: squash       # merge | squash | rebase; used at the final human OK gate (default squash, --delete-branch)
+  stages:                    # canonical stage -> real board option_id (mapped from the board's Status options)
+    backlog: ""
+    ready: ""
+    in_progress: ""
+    in_review: ""
+    done: ""
+  size_field_id: ""          # optional: node id of the board's Size single-select field (empty => no Size field on the board)
+  sizes:                     # optional: t-shirt size -> real board option_id (only when size_field_id is set)
+    xs: ""
+    s: ""
+    m: ""
+    l: ""
+    xl: ""
 ```
 
-The `execution_mode`, `verify`, and `tdd` blocks above are the canonical schema from
+The `execution_mode`, `verify`, `tdd`, and `kanban` blocks above are the canonical schema from
 `skills/_shared/openspec-convention.md`. Fill `test_command`/`build_command`
 with the commands you detected in Step 1 (test runner, build script), or leave
 them empty when none exists; leave `coverage_threshold` at `0` unless the
@@ -157,6 +219,15 @@ not. Set `tdd.enabled` from the explicit question in Step 1 (default `false`); w
 the user opts in, fill `tdd.single_test_command` with the fast single-test
 invocation. Existing test files never flip `tdd.enabled` on their own. Set
 `execution_mode` from the explicit question in Step 1 (default `supervised`).
+Set `kanban.enabled` from the explicit question in Step 1 (default `false`) — record
+`true` ONLY when the user opted in AND all three `gh` prerequisite checks passed; when
+enabled, fill `owner`, `repo`, `project_number`, `project_id`, `status_field_id`,
+`merge_method`, and each `stages.*` option id from the onboarding (leave `user` empty for
+the `@me` default, or set it to a fixed assignee override; fill the optional
+`size_field_id` + `sizes` only when the board has a Size field). Leave the whole
+`kanban` block at its defaults (`enabled: false`, empty ids) when the user declines, the
+module is absent, or a `gh` check fails. A configured `gh` never flips `kanban.enabled`
+on its own.
 
 ### Step 4: Build Skill Registry
 
@@ -182,6 +253,8 @@ for the settings that steer the whole cycle:
 - `test_command`, `build_command`, `coverage_threshold` (detected in Step 1)
 - `tdd.enabled`: `true | false` (from the explicit TDD question in Step 1 — the single switch for the optional TDD module)
 - `tdd.single_test_command` (only when `tdd.enabled` is `true` — the fast single-test invocation for the RED cycle)
+- `kanban.enabled`: `true | false` (from the explicit Kanban question in Step 1 — the single switch for the optional GitHub Projects board sync)
+- `kanban.owner`, `kanban.repo`, `kanban.project_number`, `kanban.project_id`, `kanban.status_field_id`, `kanban.merge_method`, `kanban.stages.*` (only when `kanban.enabled` is `true` — the board wiring cached during onboarding), plus the OPTIONAL `kanban.user` (empty => `@me`) and the OPTIONAL `kanban.size_field_id` + `kanban.sizes.*` (only when the board has a Size field)
 
 Settings home per mode:
 - `openspec` / `hybrid`: `openspec/config.yaml` (written in Step 3) is the home; in
@@ -228,6 +301,7 @@ Phase-specific fields to surface in `detailed_report` (adapt wording to the mode
 - **Execution mode**: {supervised | auto} — {user's answer to the explicit question}
 - **Compliance mode**: {behavioral | static} — {test infra detected? one-line rationale}
 - **TDD**: {enabled | disabled} — {user's answer to the explicit question; single_test_command if enabled}
+- **Kanban**: {enabled | disabled} — {user's answer; when enabled: project_number + stage mapping + merge_method; when a `gh` prerequisite failed: which check and the fix command}
 - **Settings home**: `sdd-init/{project}` context artifact (engram/none) or `openspec/config.yaml` (openspec/hybrid)
 - **Skill registry**: `.kurama/skill-registry.md` (+ Engram `skill-registry` when available)
 
@@ -240,7 +314,9 @@ Populate the envelope fields per mode:
   infrastructure, not a project artifact).
 - `next_recommended`: `sdd-explore` (or `sdd-new` when the user already has a change name).
 - `risks`: include a note in `none` mode recommending `engram` or `openspec` so SDD
-  artifacts survive across sessions; otherwise `None`.
+  artifacts survive across sessions; when the user asked for Kanban but the module was
+  absent or a `gh` prerequisite check failed, note that `kanban.enabled` was recorded
+  `false` and the exact command to fix it (re-run `/sdd-init` afterward); otherwise `None`.
 
 ## Rules
 

@@ -41,10 +41,22 @@ The setup script:
 - Handles OpenCode's special case (commands + JSON config merge)
 - For OpenCode: asks single vs multi-model mode (or use `--opencode-mode`)
 
-The default skill set installs **24 skills**, including the optional TDD module
-(`skills/tdd`). Pass `--without tdd` to exclude the module from disk (23 skills);
-installing it never activates TDD — activation is a separate explicit per-project
-switch (see [docs/tdd.md](tdd.md)).
+The default skill set installs **25 skills**, including two optional modules that
+ship on disk but stay inert until you opt in per project: the TDD module
+(`skills/tdd`) and the GitHub Projects Kanban module (`skills/kanban-github`). Pass
+`--without tdd` to exclude the TDD module (24 skills), or `--without optional` to
+exclude the `optional` group — `go-testing` **and** `kanban-github` (23 skills).
+Installing a module never activates it — activation is a separate explicit
+per-project switch (see [docs/tdd.md](tdd.md) and [docs/kanban-github.md](kanban-github.md)).
+
+> **`gh` prerequisite (only to activate the Kanban module).** The optional Kanban
+> board sync requires a configured GitHub CLI — `gh` installed, authenticated, and
+> holding the `read:project,project` scopes (read + write). It is needed **only if you
+> enable `kanban` for a project**; the module installs and every other skill works
+> without `gh`. `sdd-init` verifies `gh --version`, `gh auth status`, and
+> `gh project list --owner @me` when you opt in, and prints the exact fix
+> (`brew install gh` / `gh auth login` / `gh auth refresh -s read:project,project`) if
+> a check fails. See [docs/kanban-github.md](kanban-github.md).
 
 > **For external installers** (e.g. [gentle-ai](https://github.com/gentleman-programming/gentleman-ai-installer)): use `--non-interactive` flag.
 

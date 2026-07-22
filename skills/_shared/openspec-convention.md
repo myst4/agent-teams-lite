@@ -115,6 +115,29 @@ this way, so planning, implementation, and audit always agree on one mode. See
 `skills/tdd/SKILL.md` for the cycle contract and `skills/_shared/test-runners.md` for the
 runner table.
 
+The top-level `kanban` block is the single switch for the OPTIONAL Kanban module — a
+GitHub Projects (v2) board synced to the SDD cycle. `enabled` is the ONLY activator (no
+heuristics: an existing project, a configured `gh`, or the skill being installed never
+auto-activate it), and activation additionally REQUIRES a configured GitHub CLI —
+`sdd-init` verifies `gh` is installed, authenticated, and holds the `read:project,project`
+scopes (read + write) before recording `enabled: true`. The remaining keys are the board
+wiring cached during onboarding: `user` (an OPTIONAL assignee override — empty means `@me`,
+so every harness-created issue is assigned to whoever created it), `owner`, `repo`,
+`project_number`, `project_id` (the cached ProjectV2 node id, `PVT_...`, captured at
+onboarding and reused by every card move), `status_field_id` (the board's Status
+single-select field), `merge_method` (`merge` | `squash` | `rebase`, used at the final
+merge gate), `stages` (each canonical stage — `backlog`, `ready`, `in_progress`,
+`in_review`, `done` — mapped to the board's REAL Status option id; option names are never
+hardcoded, and only these 5 stages are managed — any other board column is ignored), and
+the OPTIONAL `size_field_id` + `sizes` map (captured only when the board has a Size field).
+This block is the settings home for `openspec`/`hybrid` mode; in `engram` mode the same
+`kanban` keys live in the `sdd-init/{project}` context artifact. The orchestrator reads
+them once per session and moves each issue's card inline at every phase boundary (`gh` is
+"Bash for state"); phase executors never touch the board. Kanban `gh` failures are
+WARNINGs that never block the cycle — the board is bookkeeping — except the final
+`gh pr merge`, which pauses for human instruction. See `skills/kanban-github/SKILL.md` for
+the transition commands and lifecycle contract.
+
 ```yaml
 # openspec/config.yaml
 schema: spec-driven
@@ -159,6 +182,33 @@ rules:
 tdd:
   enabled: false               # opt-in switch for the optional TDD module (RED → GREEN → REFACTOR)
   single_test_command: ""      # e.g. "npm test -- {file}"; runs ONE test/scenario for a fast RED cycle
+
+# Optional Kanban module — GitHub Projects board sync (see skills/kanban-github/SKILL.md).
+# Installed by default (manifest group `optional`); activation is opt-in per project
+# and REQUIRES a configured GitHub CLI (gh). In engram mode these keys live in the
+# sdd-init/{project} context artifact instead of this file.
+kanban:
+  enabled: false             # opt-in switch; set true only after the gh prerequisite checks pass
+  user: ""                   # optional assignee override; empty => @me (the active gh account owns every harness-created issue)
+  owner: ""                  # repo owner, deduced from the git remote and confirmed
+  repo: ""                   # repository name
+  project_number: 0          # GitHub Project (v2) number (used by item-add / field-list / view)
+  project_id: ""             # cached ProjectV2 node id (PVT_...) captured at onboarding; reused by every card move
+  status_field_id: ""        # node id of the board's Status single-select field (PVTSSF_...)
+  merge_method: squash       # merge | squash | rebase; used at the final human OK gate (default squash, --delete-branch)
+  stages:                    # canonical stage -> real board option_id (mapped from the board's Status options)
+    backlog: ""
+    ready: ""
+    in_progress: ""
+    in_review: ""
+    done: ""
+  size_field_id: ""          # optional: node id of the board's Size single-select field (empty => no Size field on the board)
+  sizes:                     # optional: t-shirt size -> real board option_id (only when size_field_id is set)
+    xs: ""
+    s: ""
+    m: ""
+    l: ""
+    xl: ""
 ```
 
 ## Archive Structure
