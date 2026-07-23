@@ -115,6 +115,13 @@ Then, inside your project:
 Full per-harness instructions (paths, orchestrator files, OpenCode single vs
 multi mode) live in [docs/installation.md](docs/installation.md).
 
+**Keeping an install current.** After pulling a new Kurama version, re-sync every
+recorded install with `./scripts/update.sh` (add `--scope project --path <repo>`
+for a per-repo install). `./scripts/doctor.sh` health-checks an install
+(receipts vs disk, `gh` scopes, Pi stack, Engram, markers, hooks), and
+`./scripts/uninstall.sh` removes exactly what the install receipt recorded —
+skills, agents, hooks, and MCP registrations included.
+
 ## The skills
 
 All 25 skills, grouped by role. Every one is a single `SKILL.md` that any
@@ -249,6 +256,7 @@ native subagents, ask-user, web access, todo, side-conversations) at pinned vers
 - [docs/persistence.md](docs/persistence.md) — the four artifact store modes in depth.
 - [docs/kanban-github.md](docs/kanban-github.md) — the optional GitHub Projects board sync module.
 - [docs/companion-skills.md](docs/companion-skills.md) — optional pairings with external process skills like superpowers.
+- [docs/demo.html](docs/demo.html) — animated feature-journey walkthrough (open it in a browser; arrow keys to navigate).
 - [docs/token-economics.md](docs/token-economics.md) — the cost analysis behind context isolation.
 - [docs/smoke-test.md](docs/smoke-test.md) — a ~15-minute manual end-to-end walk through the SDD cycle.
 - [docs/migration.md](docs/migration.md) — upgrade notes for existing installs, phase by phase.
