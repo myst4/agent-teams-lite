@@ -256,7 +256,6 @@ native subagents, ask-user, web access, todo, side-conversations) at pinned vers
 - [docs/persistence.md](docs/persistence.md) — the four artifact store modes in depth.
 - [docs/kanban-github.md](docs/kanban-github.md) — the optional GitHub Projects board sync module.
 - [docs/companion-skills.md](docs/companion-skills.md) — optional pairings with external process skills like superpowers.
-- [docs/demo.html](docs/demo.html) — animated feature-journey walkthrough (open it in a browser; arrow keys to navigate).
 - [docs/token-economics.md](docs/token-economics.md) — the cost analysis behind context isolation.
 - [docs/smoke-test.md](docs/smoke-test.md) — a ~15-minute manual end-to-end walk through the SDD cycle.
 - [docs/migration.md](docs/migration.md) — upgrade notes for existing installs, phase by phase.
