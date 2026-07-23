@@ -125,15 +125,17 @@ launches a reviewer — it reuses the same receipt.
 | `KURAMA_CHANGE=<name>` | Tell the archive gate which change to check (otherwise auto-detected). |
 | `CLAUDE_PROJECT_DIR` | Project root; set by Claude Code, falls back to the payload `cwd`, then `$PWD`. |
 
-## Main-thread scope and limitations
+## Main-thread scope
 
-Sub-agents launched via the `Task` tool run in their **own context**. The write
-guard is intended to stop the **main-thread orchestrator** from bypassing
-delegation — the delegated writer (e.g. `sdd-apply`) is exactly how code is meant
-to reach disk. If a given Claude Code build also runs this `PreToolUse` hook inside
-a sub-agent's context, that sub-agent would be blocked from writing code; in that
-case scope the hook to the orchestrator session, or set `KURAMA_GUARD_BYPASS=1` /
-`KURAMA_ORCHESTRATOR_GUARD=0` for the writer.
+`PreToolUse` hooks fire for **every** tool call in the session — including tool
+calls made inside sub-agents. The write guard tells the two apart using the
+documented hooks contract: sub-agent calls carry `agent_id`/`agent_type` in the
+hook stdin, main-thread calls do not. Any sub-agent write **passes** (the
+delegated writer — `sdd-apply`, a fix agent — is exactly how code is meant to
+reach disk); only the **main-thread orchestrator** is gated. The
+`KURAMA_GUARD_BYPASS=1` / `KURAMA_ORCHESTRATOR_GUARD=0` escapes remain for
+genuinely exceptional cases, but disabling the guard to let a delegated writer
+work is never needed.
 
 These hooks enforce the **letter** of the rules (don't hand-edit code mid-cycle;
 don't archive without a PASS). They do not judge the **spirit** — a delegated

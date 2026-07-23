@@ -14,10 +14,11 @@
 #   - exit 0  -> allow the tool call
 #   - exit 2  -> block the tool call; stderr is fed back to the model
 #
-# Sub-agents launched via Task run in their OWN context; this guard is designed
-# to fire on the main-thread orchestrator, which is why delegated writers (e.g.
-# sdd-apply) are the intended way to produce code. See README.md for the
-# main-thread limitation and the KURAMA_GUARD_BYPASS escape hatch.
+# PreToolUse hooks fire for subagent tool calls too. This guard detects
+# subagent context via the `agent_id` field in the hook stdin (present ONLY
+# inside subagents, per the Claude Code hooks contract) and lets every
+# delegated writer (sdd-apply, fix agents) pass — only MAIN-thread writes are
+# gated. See README.md for the KURAMA_GUARD_BYPASS escape hatch.
 #
 # Bash 3.2 / BSD portable. shellcheck-clean. No jq dependency (used if present).
 # ============================================================================
@@ -59,6 +60,17 @@ json_str() {
     | head -n 1 \
     | sed -e "s/.*\"$field\"[[:space:]]*:[[:space:]]*\"//" -e 's/"$//'
 }
+
+# --- subagent pass-through ---------------------------------------------------
+# PreToolUse hooks fire for EVERY tool call in the session, including tool
+# calls made inside subagents. The hook stdin carries `agent_id`/`agent_type`
+# ONLY in subagent context (documented Claude Code hooks contract) — absent on
+# the main thread. Delegated workers (sdd-apply, fix agents, review fixers)
+# are the INTENDED writers, so any subagent call passes; this guard exists to
+# stop the MAIN-thread orchestrator from writing code inline.
+if [ -n "$(json_str agent_id)" ]; then
+  exit 0
+fi
 
 # --- resolve project root ---------------------------------------------------
 project_root="${CLAUDE_PROJECT_DIR:-}"
