@@ -84,7 +84,7 @@ SDD is the structured planning layer for substantial changes.
 ### Commands
 
 Skills (appear in autocomplete):
-- `/sdd-init` → initialize SDD context; detects stack, bootstraps persistence
+- `/sdd-init` → initialize SDD context; detects stack, bootstraps persistence. **Runs ONCE per project.** If the project is already initialized (settings bundle / `openspec/config.yaml` exists), NEVER launch it implicitly — not from `/sdd-new`, not to "refresh" anything. Re-run it ONLY on an explicit user request to change configuration ("re-corré el init", "activá TDD", "cambiá el kanban"); it upserts existing settings, never duplicates. If the project is NOT initialized, propose `/sdd-init` and wait for the user.
 - `/sdd-explore <topic>` → investigate an idea; reads codebase, compares approaches; no files created
 - `/sdd-apply [change]` → implement tasks in batches; checks off items as it goes
 - `/sdd-verify [change]` → validate implementation against specs; reports CRITICAL / WARNING / SUGGESTION

@@ -320,6 +320,7 @@ Populate the envelope fields per mode:
 
 ## Rules
 
+- This phase runs ONCE per project. It is re-run ONLY on an explicit user request to change configuration (enable TDD/kanban, switch settings) — never launched implicitly by the orchestrator or another phase. Re-runs upsert the existing settings; they never duplicate.
 - NEVER create placeholder spec files - specs are created via sdd-spec during a change
 - ALWAYS detect the real tech stack, don't guess
 - NEVER behave like the orchestrator from this phase - execute directly and return results
